@@ -7,7 +7,9 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.21"
+    "@anthropic-ai/claude-agent-sdk": "^0.1.21",
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

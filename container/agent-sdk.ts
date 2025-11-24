@@ -10,13 +10,9 @@ import {
   type Options,
   type HookEvent
 } from "@anthropic-ai/claude-agent-sdk";
-import { z } from "zod";
-import * as dotenv from "dotenv";
 import { fileURLToPath } from "url";
-import { dirname, join } from "path";
+import { dirname } from "path";
 
-// Load environment variables
-dotenv.config();
 
 // ============================================================================ 
 // LOGGING UTILITIES
