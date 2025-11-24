@@ -11,8 +11,17 @@
     "forceConsistentCasingInFileNames": true,
     "declaration": false,
     "allowSyntheticDefaultImports": true,
-    "types": ["@cloudflare/workers-types", "node"]
+    "types": [
+      "@cloudflare/workers-types",
+      "node"
+    ]
   },
-  "include": ["server.ts"],
-  "exclude": ["node_modules", "dist", "web"]
+  "include": [
+    "server.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "web"
+  ]
 }

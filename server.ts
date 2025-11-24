@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { Container } from "@cloudflare/containers";
+import { getSandbox } from "@cloudflare/sandbox";
+export { Sandbox } from "@cloudflare/sandbox";
 
 export class AgentContainer extends Container {
   defaultPort = 8080;

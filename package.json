@@ -9,7 +9,7 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "@cloudflare/containers": "^0.0.28",
+    "@cloudflare/sandbox": "^0.5.1",
     "hono": "^4.0.0"
   },
   "devDependencies": {

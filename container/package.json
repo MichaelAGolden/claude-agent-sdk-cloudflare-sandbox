@@ -1,8 +1,8 @@
 {
-  "name": "claude-agent-container",
+  "name": "claude-agent-sandbox",
   "version": "1.0.0",
   "type": "module",
-  "main": "dist/server.js",
+  "main": "dist/agent-sdk.js",
   "scripts": {
     "build": "tsc"
   },
