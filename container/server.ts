@@ -32,7 +32,7 @@ const server = http.createServer(async (req, res) => {
       const response = query({
         prompt,
         options: {
-          model: process.env.MODEL || "claude-sonnet-4-5",
+          model: process.env.MODEL || "claude-sonnet-4-5-20250929",
           settingSources: ['local', 'project'],
           permissionMode: 'bypassPermissions'
         },
