@@ -5,7 +5,11 @@ export class AgentContainer extends Container {
   defaultPort = 8080;
   sleepAfter = "5m";
 
-  constructor(ctx: DurableObjectState, env: any) {
+  constructor(ctx: DurableObjectState<{
+    ANTHROPIC_API_KEY?: string;
+    CLAUDE_CODE_OAUTH_TOKEN?: string;
+    MODEL?: string;
+  }>, env: Bindings) {
     super(ctx, env);
     this.envVars = {
       ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY || env.CLAUDE_CODE_OAUTH_TOKEN || "",
