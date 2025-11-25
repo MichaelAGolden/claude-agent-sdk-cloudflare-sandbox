@@ -31,7 +31,14 @@ export function ChatContainer() {
       )}
 
       {/* Messages area */}
-      <ChatMessages messages={displayMessages} isStreaming={state.isStreaming} />
+      <ChatMessages
+        messages={displayMessages.map(msg => ({
+          role: msg.role as "user" | "assistant",
+          content: msg.content,
+          uuid: msg.uuid
+        }))}
+        isStreaming={state.isStreaming}
+      />
 
       {/* Input area */}
       <ChatInput

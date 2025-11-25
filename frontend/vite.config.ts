@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 5174,
     proxy: {
       // Proxy Socket.IO connections to wrangler dev server
       '/socket.io': {
@@ -26,6 +26,7 @@ export default defineConfig({
         changeOrigin: true
       },
       // Proxy API calls to wrangler dev server
+      '/api': 'http://localhost:8787',
       '/health': 'http://localhost:8787',
       '/setup': 'http://localhost:8787',
       '/users': 'http://localhost:8787',

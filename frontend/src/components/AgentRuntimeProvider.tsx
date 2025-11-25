@@ -1,6 +1,7 @@
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from "@assistant-ui/react";
 import { useAgent } from "../contexts/AgentContext";
-import { useRef, Component, ReactNode, useCallback, useEffect } from "react";
+import { useRef, Component, useCallback } from "react";
+import type { ReactNode } from "react";
 
 // Counter for fallback IDs to ensure uniqueness
 let messageIdCounter = 0;
@@ -22,18 +23,37 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 
   render() {
     if (this.state.hasError) {
+      const errorText = this.state.error
+        ? `${this.state.error.message}\n\n${this.state.error.stack}`
+        : 'Unknown error';
+
       return (
         <div className="p-4 text-red-500">
           <h2>Something went wrong rendering messages.</h2>
-          <button
-            onClick={() => {
-              this.setState({ hasError: false });
-              window.location.reload();
-            }}
-            className="mt-2 px-4 py-2 bg-red-500 text-white rounded"
-          >
-            Reload
-          </button>
+          {this.state.error && (
+            <pre className="mt-2 p-2 bg-red-100 text-red-800 text-xs rounded overflow-auto max-h-40">
+              {errorText}
+            </pre>
+          )}
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(errorText);
+              }}
+              className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+            >
+              Copy Error
+            </button>
+            <button
+              onClick={() => {
+                this.setState({ hasError: false });
+                window.location.reload();
+              }}
+              className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+            >
+              Reload
+            </button>
+          </div>
         </div>
       );
     }
@@ -59,47 +79,50 @@ function extractTextContent(content: any): string {
 }
 
 // Helper to convert SDK content to assistant-ui format
-function convertContent(content: any, stableId: string): any[] {
+// Returns array compatible with ThreadMessageLike content
+function convertContent(content: unknown, _stableId?: string) {
   try {
     // String content
     if (typeof content === 'string') {
-      return [{ type: "text", text: content }];
+      return [{ type: "text" as const, text: content }];
     }
 
     // Array content (from Claude SDK)
     if (Array.isArray(content)) {
-      const result: any[] = [];
+      const result: Array<{ type: "text"; text: string }> = [];
 
       for (let i = 0; i < content.length; i++) {
         const block = content[i];
 
         if (typeof block === 'string') {
-          result.push({ type: "text", text: block });
+          result.push({ type: "text" as const, text: block });
         } else if (block?.type === 'text') {
-          result.push({ type: "text", text: block.text || '' });
+          result.push({ type: "text" as const, text: block.text || '' });
         } else if (block?.type === 'tool_use') {
+          // Convert tool calls to text representation
+          // Our ThreadMessages component handles tool rendering directly
           result.push({
-            type: "tool-call",
-            toolCallId: block.id || `tool-${stableId}-${i}`,
-            toolName: block.name || 'unknown',
-            args: block.input || {},
+            type: "text" as const,
+            text: `[Tool: ${block.name || 'unknown'}]`,
           });
         } else if (block?.type === 'tool_result') {
+          // Tool results are converted to text
           const resultContent = typeof block.content === 'string'
             ? block.content
             : extractTextContent(block.content);
-          result.push({
-            type: "tool-result",
-            toolCallId: block.tool_use_id || `result-${stableId}-${i}`,
-            result: resultContent,
-          });
+          if (resultContent) {
+            result.push({
+              type: "text" as const,
+              text: resultContent,
+            });
+          }
         }
         // Skip unknown block types
       }
 
       // If no valid content, return empty text
       if (result.length === 0) {
-        return [{ type: "text", text: "" }];
+        return [{ type: "text" as const, text: "" }];
       }
 
       return result;
@@ -107,17 +130,18 @@ function convertContent(content: any, stableId: string): any[] {
 
     // Object content
     if (content && typeof content === 'object') {
-      if (content.type === 'text') {
-        return [{ type: "text", text: content.text || '' }];
+      const obj = content as Record<string, unknown>;
+      if (obj.type === 'text' && typeof obj.text === 'string') {
+        return [{ type: "text" as const, text: obj.text }];
       }
-      return [{ type: "text", text: JSON.stringify(content) }];
+      return [{ type: "text" as const, text: JSON.stringify(content) }];
     }
 
     // Fallback
-    return [{ type: "text", text: String(content || '') }];
+    return [{ type: "text" as const, text: String(content || '') }];
   } catch (error) {
     console.error('Error converting content:', error, content);
-    return [{ type: "text", text: "[Error displaying message]" }];
+    return [{ type: "text" as const, text: "[Error displaying message]" }];
   }
 }
 
@@ -200,7 +224,7 @@ export const AgentRuntimeProvider = ({ children }: { children: React.ReactNode }
       return {
         id: msg.stableId,
         role: msg.role as "user" | "assistant",
-        content: [{ type: "text", text: "[Error displaying message]" }],
+        content: [{ type: "text" as const, text: "[Error displaying message]" }],
       };
     }
   }, [messageCount, isStreaming]);

@@ -5,16 +5,44 @@ export { Sandbox } from "@cloudflare/sandbox";
 type Bindings = {
   Sandbox: DurableObjectNamespace<Sandbox>;
   USER_DATA: R2Bucket;
+  DB: D1Database;
   ANTHROPIC_API_KEY?: string;
   CLAUDE_CODE_OAUTH_TOKEN?: string;
   MODEL?: string;
   API_KEY: string;
+  CLERK_SECRET_KEY?: string;
+  ACCOUNT_ID?: string;
   ENVIRONMENT?: string; // "development" | "production"
 };
 
 type Skill = {
   name: string;
   content: string;
+};
+
+// Thread types for D1
+type Thread = {
+  id: string;
+  user_id: string;
+  session_id: string | null;
+  title: string;
+  summary: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type Message = {
+  id: string;
+  thread_id: string;
+  role: string;
+  content: string;
+  hook_event: string | null;
+  created_at: string;
+};
+
+// Helper: Generate UUID
+const generateUUID = (): string => {
+  return crypto.randomUUID();
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -74,8 +102,308 @@ app.get("/health", (c) => {
     hasApiKey: !!(c.env?.ANTHROPIC_API_KEY || c.env?.CLAUDE_CODE_OAUTH_TOKEN),
     hasSandbox: !!c.env?.Sandbox,
     hasR2: !!c.env?.USER_DATA,
+    hasD1: !!c.env?.DB,
     timestamp: new Date().toISOString(),
   });
+});
+
+// =============================================================================
+// Thread API Endpoints (D1)
+// =============================================================================
+
+/**
+ * List all threads for a user.
+ *
+ * GET /api/threads?userId=xxx
+ */
+app.get("/api/threads", async (c) => {
+  try {
+    const userId = c.req.query("userId");
+    if (!userId) {
+      return c.json({ error: "userId query parameter is required" }, 400);
+    }
+
+    const result = await c.env.DB.prepare(
+      `SELECT id, user_id, session_id, title, summary, created_at, updated_at
+       FROM threads
+       WHERE user_id = ?
+       ORDER BY updated_at DESC`
+    ).bind(userId).all<Thread>();
+
+    return c.json({
+      threads: result.results || [],
+      count: result.results?.length || 0,
+    });
+  } catch (error: any) {
+    console.error("[List Threads Error]", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * Create a new thread.
+ *
+ * POST /api/threads
+ * Body: { userId: "xxx", title?: "optional title" }
+ */
+app.post("/api/threads", async (c) => {
+  try {
+    const body = await c.req.json<{ userId: string; title?: string }>();
+
+    if (!body.userId) {
+      return c.json({ error: "userId is required" }, 400);
+    }
+
+    const threadId = generateUUID();
+    const title = body.title || "New conversation";
+    const now = new Date().toISOString();
+
+    // Ensure user exists (upsert)
+    await c.env.DB.prepare(
+      `INSERT OR IGNORE INTO users (id) VALUES (?)`
+    ).bind(body.userId).run();
+
+    // Create thread
+    await c.env.DB.prepare(
+      `INSERT INTO threads (id, user_id, title, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(threadId, body.userId, title, now, now).run();
+
+    return c.json({
+      id: threadId,
+      user_id: body.userId,
+      title,
+      session_id: null,
+      summary: null,
+      created_at: now,
+      updated_at: now,
+    });
+  } catch (error: any) {
+    console.error("[Create Thread Error]", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * Get a thread with all its messages.
+ *
+ * GET /api/threads/:id
+ */
+app.get("/api/threads/:id", async (c) => {
+  try {
+    const threadId = c.req.param("id");
+
+    // Get thread
+    const thread = await c.env.DB.prepare(
+      `SELECT id, user_id, session_id, title, summary, created_at, updated_at
+       FROM threads WHERE id = ?`
+    ).bind(threadId).first<Thread>();
+
+    if (!thread) {
+      return c.json({ error: "Thread not found" }, 404);
+    }
+
+    // Get messages
+    const messagesResult = await c.env.DB.prepare(
+      `SELECT id, thread_id, role, content, hook_event, created_at
+       FROM messages
+       WHERE thread_id = ?
+       ORDER BY created_at ASC`
+    ).bind(threadId).all<Message>();
+
+    return c.json({
+      thread,
+      messages: messagesResult.results || [],
+    });
+  } catch (error: any) {
+    console.error("[Get Thread Error]", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * Update a thread (title, session_id, summary).
+ *
+ * PATCH /api/threads/:id
+ * Body: { title?: "xxx", sessionId?: "xxx", summary?: "xxx" }
+ */
+app.patch("/api/threads/:id", async (c) => {
+  try {
+    const threadId = c.req.param("id");
+    const body = await c.req.json<{ title?: string; sessionId?: string; summary?: string }>();
+
+    // Build dynamic update query
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (body.title !== undefined) {
+      updates.push("title = ?");
+      values.push(body.title);
+    }
+    if (body.sessionId !== undefined) {
+      updates.push("session_id = ?");
+      values.push(body.sessionId);
+    }
+    if (body.summary !== undefined) {
+      updates.push("summary = ?");
+      values.push(body.summary);
+    }
+
+    if (updates.length === 0) {
+      return c.json({ error: "No fields to update" }, 400);
+    }
+
+    updates.push("updated_at = ?");
+    values.push(new Date().toISOString());
+    values.push(threadId);
+
+    await c.env.DB.prepare(
+      `UPDATE threads SET ${updates.join(", ")} WHERE id = ?`
+    ).bind(...values).run();
+
+    // Return updated thread
+    const thread = await c.env.DB.prepare(
+      `SELECT id, user_id, session_id, title, summary, created_at, updated_at
+       FROM threads WHERE id = ?`
+    ).bind(threadId).first<Thread>();
+
+    return c.json(thread);
+  } catch (error: any) {
+    console.error("[Update Thread Error]", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * Delete a thread and all its messages.
+ *
+ * DELETE /api/threads/:id
+ */
+app.delete("/api/threads/:id", async (c) => {
+  try {
+    const threadId = c.req.param("id");
+
+    // Messages are deleted via CASCADE constraint
+    await c.env.DB.prepare(
+      `DELETE FROM threads WHERE id = ?`
+    ).bind(threadId).run();
+
+    return c.json({ status: "deleted", threadId });
+  } catch (error: any) {
+    console.error("[Delete Thread Error]", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * Add a message to a thread.
+ *
+ * POST /api/threads/:id/messages
+ * Body: { role: "user"|"assistant"|"hook", content: "...", hookEvent?: {...} }
+ */
+app.post("/api/threads/:id/messages", async (c) => {
+  try {
+    const threadId = c.req.param("id");
+    const body = await c.req.json<{ role: string; content: string; hookEvent?: any }>();
+
+    if (!body.role || body.content === undefined) {
+      return c.json({ error: "role and content are required" }, 400);
+    }
+
+    const messageId = generateUUID();
+    const now = new Date().toISOString();
+    const contentStr = typeof body.content === 'string' ? body.content : JSON.stringify(body.content);
+    const hookEventStr = body.hookEvent ? JSON.stringify(body.hookEvent) : null;
+
+    // Insert message
+    await c.env.DB.prepare(
+      `INSERT INTO messages (id, thread_id, role, content, hook_event, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(messageId, threadId, body.role, contentStr, hookEventStr, now).run();
+
+    // Update thread's updated_at
+    await c.env.DB.prepare(
+      `UPDATE threads SET updated_at = ? WHERE id = ?`
+    ).bind(now, threadId).run();
+
+    return c.json({
+      id: messageId,
+      thread_id: threadId,
+      role: body.role,
+      content: contentStr,
+      hook_event: hookEventStr,
+      created_at: now,
+    });
+  } catch (error: any) {
+    console.error("[Add Message Error]", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * Generate title for a thread using Claude Haiku.
+ *
+ * POST /api/threads/:id/title
+ * Generates a title based on the first message in the thread.
+ */
+app.post("/api/threads/:id/title", async (c) => {
+  try {
+    const threadId = c.req.param("id");
+
+    // Get first user message
+    const firstMessage = await c.env.DB.prepare(
+      `SELECT content FROM messages
+       WHERE thread_id = ? AND role = 'user'
+       ORDER BY created_at ASC
+       LIMIT 1`
+    ).bind(threadId).first<{ content: string }>();
+
+    if (!firstMessage) {
+      return c.json({ error: "No user message found" }, 400);
+    }
+
+    // Call Haiku to generate title
+    const apiKey = c.env.ANTHROPIC_API_KEY || c.env.CLAUDE_CODE_OAUTH_TOKEN;
+    if (!apiKey) {
+      return c.json({ error: "No API key configured" }, 500);
+    }
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-3-haiku-20240307",
+        max_tokens: 50,
+        messages: [{
+          role: "user",
+          content: `Generate a short 3-6 word title for this conversation. Only respond with the title, no quotes or explanation.\n\nFirst message: "${firstMessage.content.substring(0, 500)}"`
+        }]
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error("[Haiku Error]", error);
+      return c.json({ error: "Failed to generate title" }, 500);
+    }
+
+    const result: any = await response.json();
+    const title = result.content?.[0]?.text?.trim() || "New conversation";
+
+    // Update thread title
+    await c.env.DB.prepare(
+      `UPDATE threads SET title = ?, updated_at = ? WHERE id = ?`
+    ).bind(title, new Date().toISOString(), threadId).run();
+
+    return c.json({ threadId, title });
+  } catch (error: any) {
+    console.error("[Generate Title Error]", error);
+    return c.json({ error: error.message }, 500);
+  }
 });
 
 /**
@@ -203,11 +531,13 @@ app.all("/socket.io/*", async (c) => {
   const targetUrl = `http://localhost:3001${url.pathname}${url.search}`;
 
   try {
-    const response = await sandbox.fetch(targetUrl, {
+    // Build request with proper options
+    const fetchRequest = new Request(targetUrl, {
       method: c.req.method,
       headers: c.req.raw.headers,
       body: c.req.method !== "GET" && c.req.method !== "HEAD" ? await c.req.arrayBuffer() : undefined,
     });
+    const response = await sandbox.fetch(fetchRequest);
 
     return new Response(response.body, {
       status: response.status,

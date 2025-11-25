@@ -326,7 +326,8 @@ const startAgentQuery = async (sessionId: string, initialOptions: ExtendedOption
         permissionMode: initialOptions.permissionMode,
         resume: initialOptions.resume,
         maxThinkingTokens: initialOptions.maxThinkingTokens,
-        includePartialMessages: initialOptions.includePartialMessages,
+        // Enable streaming by default for real-time text updates
+        includePartialMessages: initialOptions.includePartialMessages !== false,
         // Enable project settings to discover skills from .claude/skills/
         settingSources: initialOptions.settingSources !== undefined ? initialOptions.settingSources : ['project'],
         fallbackModel: initialOptions.fallbackModel,

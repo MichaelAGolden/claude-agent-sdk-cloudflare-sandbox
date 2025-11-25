@@ -1,6 +1,6 @@
 name = "claude-agent-worker"
 main = "server.ts"
-account_id = "7a25071bd379490c242277ea870df57a"
+account_id = "c8a3a4bee1a0c137e56b7adca8d3e8fe"
 compatibility_date = "2025-09-23"
 compatibility_flags = ["nodejs_compat"]
 
@@ -19,6 +19,12 @@ class_name = "Sandbox"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Sandbox"]
+
+# D1 Database for threads and messages
+[[d1_databases]]
+binding = "DB"
+database_name = "claude-agent-threads"
+database_id = "fb71cfbf-46dc-4fce-a8b0-bbe5fc303d47"
 
 # R2 Buckets for persistent storage
 [[r2_buckets]]

@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, KeyboardEvent } from "react";
+import { useState, useRef, useEffect } from "react";
+import type { KeyboardEvent } from "react";
 import { SendHorizonal, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
