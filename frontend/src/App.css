@@ -1,0 +1,682 @@
+:root {
+  --primary-color: #7c3aed;
+  --primary-light: #9f7aea;
+  --bg-color: #f1f5f9;
+  --sidebar-bg: #ffffff;
+  --border-color: #e2e8f0;
+  --text-color: #334155;
+  --text-light: #64748b;
+  --user-msg-bg: #7c3aed;
+  --user-msg-text: #ffffff;
+  --assistant-msg-bg: #ffffff;
+  --assistant-msg-text: #1e293b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.app-header {
+  background: hsl(var(--background));
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid hsl(var(--border));
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app-main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+  min-height: 0;
+}
+
+/* Simplified main layout without sidebar */
+.app-main-simple {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+  width: 100%;
+}
+
+.sidebar {
+  width: 280px;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border-color);
+  padding: 1.5rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: var(--bg-color);
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Connection Manager */
+.connection-manager {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px;
+  background-color: #f8fafc;
+  border: 1px solid var(--border-color);
+}
+
+.status-indicator.connected { color: #059669; border-color: #a7f3d0; background-color: #ecfdf5; }
+.status-indicator.disconnected { color: #dc2626; border-color: #fecaca; background-color: #fef2f2; }
+
+.socket-id {
+  font-family: monospace;
+  font-size: 0.7rem;
+  color: var(--text-light);
+  display: none;
+}
+
+/* Configuration Panel */
+.configuration-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.toggle-btn {
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: hsl(var(--foreground));
+  transition: all 0.2s;
+}
+
+.toggle-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.form-group label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-color);
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"],
+.form-group textarea {
+  padding: 0.625rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: var(--primary-light);
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.1);
+}
+
+.form-group.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.error {
+  color: #dc2626;
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+/* Chat Interface */
+.chat-interface {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* Ensure the chat interface container has proper height */
+.content > * {
+  height: 100%;
+  min-height: 0;
+}
+
+.messages-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  scroll-behavior: smooth;
+}
+
+.message {
+  max-width: 85%;
+  padding: 1rem 1.5rem;
+  border-radius: 1rem;
+  font-size: 1rem;
+  line-height: 1.6;
+  position: relative;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  word-wrap: break-word;
+}
+
+.message.user {
+  align-self: flex-end;
+  background-color: var(--user-msg-bg);
+  color: var(--user-msg-text);
+  border-bottom-right-radius: 0.25rem;
+}
+
+.message.assistant {
+  align-self: flex-start;
+  background-color: var(--assistant-msg-bg);
+  color: var(--assistant-msg-text);
+  border: 1px solid var(--border-color);
+  border-bottom-left-radius: 0.25rem;
+}
+
+.message.system {
+  align-self: center;
+  background-color: transparent;
+  box-shadow: none;
+  max-width: 90%;
+  padding: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-light);
+  border: 1px dashed var(--border-color);
+  border-radius: 0.5rem;
+  text-align: center;
+}
+
+/* System Event Styling */
+.system-event {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  text-align: left;
+}
+
+.system-event-title {
+  font-weight: 600;
+  color: #475569;
+}
+
+.system-event details summary {
+  cursor: pointer;
+  color: var(--primary-color);
+  font-size: 0.8rem;
+  user-select: none;
+}
+
+.system-event pre {
+  background: #f8fafc;
+  padding: 0.75rem;
+  border-radius: 0.375rem;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 0.75rem;
+  overflow-x: auto;
+  margin: 0.5rem 0 0 0;
+  border: 1px solid var(--border-color);
+}
+
+.message-content {
+  white-space: pre-wrap;
+}
+
+.input-area {
+  padding: 1.5rem 2rem;
+  background: hsl(var(--background));
+  border-top: 1px solid hsl(var(--border));
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.input-area input {
+  flex: 1;
+  padding: 1rem 1.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 9999px;
+  background: #f8fafc;
+  font-size: 1rem;
+  transition: all 0.2s;
+}
+
+.input-area input:focus {
+  outline: none;
+  border-color: var(--primary-light);
+  background: hsl(var(--background));
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+}
+
+.input-area button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  padding: 0;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.input-area button:hover:not(:disabled) {
+  background-color: #6d28d9;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 8px -1px rgba(0, 0, 0, 0.15);
+}
+
+.input-area button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background-color: var(--text-light);
+}
+
+/* Modal - Only for Critical Permissions */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: hsl(var(--background));
+  padding: 2rem;
+  border-radius: 1rem;
+  width: 90%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+.modal h3 {
+  margin: 0;
+  color: var(--text-color);
+  font-size: 1.25rem;
+}
+
+.modal pre {
+  background: #f1f5f9;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  font-size: 0.85rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+.actions button {
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.9rem;
+  transition: opacity 0.2s;
+}
+
+/* ... existing styles ... */
+
+/* Loading Animation */
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 1rem 1.5rem;
+  background: transparent;
+  width: fit-content;
+}
+
+.loading-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  background-color: var(--text-light);
+  border-radius: 50%;
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.loading-dot:nth-child(1) { animation-delay: -0.32s; }
+.loading-dot:nth-child(2) { animation-delay: -0.16s; }
+.loading-dot:nth-child(3) { animation-delay: 0s; }
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
+}
+
+/* Stop Button Styling */
+.input-area button.stop-btn {
+  background-color: #ef4444; /* Red for stop */
+}
+
+/* Permission Request Card */
+
+.permission-request {
+
+  background: hsl(var(--background));
+
+  border: 1px solid var(--border-color);
+
+  border-radius: 0.75rem;
+
+  overflow: hidden;
+
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+
+  margin: 0.5rem 0;
+
+  max-width: 100%;
+
+}
+
+
+
+.permission-header {
+
+  background: #f8fafc;
+
+  padding: 0.75rem 1rem;
+
+  display: flex;
+
+  align-items: center;
+
+  gap: 0.5rem;
+
+  font-weight: 600;
+
+  color: #475569;
+
+  border-bottom: 1px solid var(--border-color);
+
+  font-size: 0.9rem;
+
+}
+
+
+
+.permission-icon {
+
+  color: var(--primary-color);
+
+}
+
+
+
+.permission-body {
+
+  padding: 1rem;
+
+  font-size: 0.9rem;
+
+}
+
+
+
+.permission-body p {
+
+  margin: 0 0 0.5rem 0;
+
+}
+
+
+
+.permission-body details {
+
+  margin-top: 0.5rem;
+
+}
+
+
+
+.permission-body summary {
+
+  cursor: pointer;
+
+  color: var(--text-light);
+
+  font-size: 0.8rem;
+
+  user-select: none;
+
+}
+
+
+
+.permission-body pre {
+
+  background: #f1f5f9;
+
+  padding: 0.75rem;
+
+  border-radius: 0.5rem;
+
+  overflow-x: auto;
+
+  margin-top: 0.5rem;
+
+  font-size: 0.8rem;
+
+}
+
+
+
+.permission-actions {
+
+  padding: 0.75rem 1rem;
+
+  background: #f8fafc;
+
+  border-top: 1px solid var(--border-color);
+
+  display: flex;
+
+  gap: 0.75rem;
+
+  justify-content: flex-end;
+
+}
+
+
+
+.permission-status {
+
+  display: flex;
+
+  align-items: center;
+
+  gap: 0.5rem;
+
+  font-weight: 600;
+
+  font-size: 0.9rem;
+
+}
+
+
+
+.permission-status.allowed {
+
+  color: #10b981;
+
+}
+
+
+
+.permission-status.denied {
+
+  color: #ef4444;
+
+}
+
+
+
+.permission-request.resolved {
+
+  opacity: 0.8;
+
+}
+
+
+
+/* ... existing styles ... */
+
+/* Assistant UI Overrides for proper scrolling */
+
+/* The AssistantRuntimeProvider wrapper needs to fill available space */
+.flex.flex-col.flex-1.min-h-0.h-full.overflow-hidden > div {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+/* Thread root and container */
+.aui-root,
+.aui-thread-root {
+  flex: 1 !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+/* The scrollable viewport for messages */
+.aui-thread-viewport {
+  flex: 1 !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+/* Composer should stay at bottom and not shrink */
+.aui-composer-wrapper {
+  flex-shrink: 0 !important;
+  position: relative !important;
+  z-index: 10 !important;
+  background: hsl(var(--background)) !important;
+}
+
+/* Scroll to bottom button positioning */
+.aui-thread-scroll-to-bottom {
+  position: sticky !important;
+  bottom: 1rem !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  z-index: 50 !important;
+}
+
+/* Welcome screen should be scrollable too */
+.aui-thread-welcome-root {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+
