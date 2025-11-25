@@ -1,170 +1,261 @@
-# Claude Agent SDK + Cloudflare Containers
+# Claude Agent SDK + Cloudflare Sandbox
 
-Cloudflare containers are such good fit for Claude Agent SDK because they work differently than other container solutions. Instead of just a container, you get three components: a Worker (serverless compute), a Durable Object (storage), and a Container (isolated Agent runtime).
+A production-ready monorepo integrating the Claude Agent SDK with Cloudflare Sandbox containers, featuring a React frontend, WebSocket streaming, and R2-backed persistent storage for user skills, conversations, and settings.
 
-You use the Worker to set up context (sql queries etc) allowing you to triage requests to make sure they actually need an agent to solve them before even starting the container. So fast, so economical, so good!
+## Why Cloudflare Sandbox?
 
-## Prerequisites
+Cloudflare containers are a perfect fit for Claude Agent SDK because they work differently than other container solutions. Instead of just a container, you get three components:
+
+- **Worker** (serverless compute) - Fast request routing and context setup
+- **Durable Object** (stateful coordination) - Session management and container orchestration
+- **Container** (isolated Agent runtime) - Secure Claude Agent SDK execution
+
+This architecture lets you triage requests at the Worker level (SQL queries, caching, etc.) before even starting a container. Fast, economical, and scales automatically.
+
+## Features
+
+- **Real-time WebSocket streaming** via Socket.IO
+- **Persistent R2 storage** for user skills, conversations, and settings
+- **React frontend** with modern UI (Vite + TypeScript)
+- **Hybrid dev/prod modes** (file writes in dev, R2 mounting in production)
+- **Monorepo structure** with unified scripts
+- **Skills system** with runtime loading from R2
+- **Session management** per user with Durable Objects
+- **Cost-efficient** (~$0.13/month for 1000 active users)
+
+## Quick Start
 
 ```bash
-npm install -g wrangler  # Cloudflare CLI
-```
+# 1. Install Cloudflare CLI
+npm install -g wrangler
 
-Get your Anthropic API key from https://console.anthropic.com/settings/keys
+# 2. Clone and install all dependencies
+npm run install:all
 
-## Quickstart
-
-```bash
-# 1. Install dependencies
-npm install && cd container && npm install && cd ..
-
-# 2. Create config with your Anthropic API key
+# 3. Create environment variables
 cat > .dev.vars << EOF
 ANTHROPIC_API_KEY=sk-ant-your-api-key-here
 MODEL=claude-sonnet-4-5-20250929
 API_KEY=your-secret-key-here
+ENVIRONMENT=development
 EOF
 
-# 3. Start dev server (first run builds container image, takes ~30s)
-npm run dev
+# 4. (Optional) Set up R2 persistent storage
+npm run setup:r2
+
+# 5. Start both frontend and backend
+npm run dev:full
 ```
 
-**When you see:** `Ready on http://localhost:XXXX`
+**Then open:** http://localhost:5173
 
-```bash
-# 4. Test it (use the port from above)
-./test.sh 8787
+Get your Anthropic API key from https://console.anthropic.com/settings/keys
 
-# Or manually (replace YOUR_API_KEY with value from .dev.vars):
-curl -X POST http://localhost:8787/query \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -d '{"query": "What is 2+2?"}'
+For detailed setup instructions, see **[DEVELOPMENT.md](./DEVELOPMENT.md)**
+
+## Architecture
+
+```
+┌─────────────────┐
+│ Frontend (5173) │  React + Socket.IO client
+└────────┬────────┘
+         │ Vite Proxy
+         ▼
+┌─────────────────┐
+│ Worker (8787)   │  Hono + getSandbox()
+└────────┬────────┘
+         │ wsConnect()
+         ▼
+┌─────────────────┐
+│ Sandbox (3001)  │  Express + Socket.IO + Claude Agent SDK
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ R2 Storage      │  User skills, conversations, settings
+└─────────────────┘
 ```
 
-**Expected response:**
+**Request flow:**
+1. User interacts with React frontend (port 5173)
+2. Frontend connects via WebSocket to Worker (port 8787)
+3. Worker uses `sandbox.wsConnect()` to proxy to container (port 3001)
+4. Container runs Claude Agent SDK with Socket.IO
+5. User data loads from R2 (mount in prod, writeFile in dev)
 
-```json
-{ "success": true, "response": "4" }
+**Port Reference:**
+- `5173` - Vite dev server (frontend)
+- `8787` - Wrangler dev server (Worker)
+- `3001` - Agent SDK Socket.IO server (container)
+- `3000` - Reserved for Cloudflare control plane
+
+## Project Structure
+
 ```
+claude-agent-sdk-cloudflare-sandbox/
+├── container/               # Agent SDK code (runs inside sandbox)
+│   ├── agent-sdk.ts        # Socket.IO server for Claude Agent SDK
+│   ├── package.json
+│   └── dist/               # Built output
+├── frontend/               # React + Vite frontend
+│   ├── src/
+│   ├── package.json
+│   └── .env
+├── scripts/
+│   └── setup-r2.sh         # R2 bucket setup script
+├── Dockerfile              # Sandbox container image
+├── server.ts               # Cloudflare Worker (Hono)
+├── wrangler.toml           # Worker configuration
+└── package.json            # Root monorepo scripts
+```
+
+## Documentation
+
+- **[DEVELOPMENT.md](./DEVELOPMENT.md)** - Complete development setup guide
+- **[README-R2-SETUP.md](./README-R2-SETUP.md)** - R2 storage configuration and usage
+- **[API-REFERENCE.md](./API-REFERENCE.md)** - Complete API documentation
+- **[IMPLEMENTATION-SUMMARY.md](./IMPLEMENTATION-SUMMARY.md)** - Technical implementation overview
 
 ## Troubleshooting
 
-**"Unauthorized"**
+See **[DEVELOPMENT.md - Common Issues](./DEVELOPMENT.md#common-issues)** for detailed troubleshooting, including:
 
-- Check `Authorization: Bearer <API_KEY>` header is included
-- Verify API_KEY in `.dev.vars` matches the header value
+- "Cannot connect to Worker"
+- "Sandbox not starting"
+- "WebSocket connection failed"
+- "API Key not found"
 
-**"ANTHROPIC_API_KEY not set"**
-
-- Check `.dev.vars` exists and contains your API key
-- Get your API key from https://console.anthropic.com/settings/keys
-- Key must start with `sk-ant-`
-
-**"Container failed to start"**
-
-- First run builds Docker image (~30 seconds)
-- Check `docker ps` to see if container is running
-- Try `wrangler dev --local` for faster local testing
-
-**Rate limits or quota errors**
-
-- Check your Anthropic API usage at https://console.anthropic.com/settings/limits
-- Upgrade your plan if needed
-
-## How it works
-
-```
-Request → Worker → DO.idFromName(accountId) → Container → Claude SDK
-```
-
-- Same `accountId` = same Durable Object = serialized requests
-- Different `accountId` = different Durable Objects = parallel execution
-- Containers stay warm 5 minutes (`sleepAfter` in server.ts)
-
-**Learn more:** [Claude Agent SDK Documentation](https://docs.claude.com/en/api/agent-sdk/overview#core-concepts)
+Quick checks:
+1. Ensure Docker is running
+2. Check `.dev.vars` has `ANTHROPIC_API_KEY`
+3. Verify `npm run dev:full` shows both servers running
+4. Check http://localhost:8787/health returns healthy status
 
 ## Agent Skills
 
-This repo demonstrates how to set up [Agent Skills](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview) in containers (current best practice, though this may change in future SDK versions). Skills are modular capabilities that transform Claude from a general-purpose assistant into a domain specialist, packaging instructions and resources that Claude uses automatically when relevant. By enabling progressive disclosure of specialized knowledge, skills eliminate repetition and context overhead—making them the recommended approach for production Agent SDK deployments.
+Skills are modular capabilities that transform Claude from a general-purpose assistant into a domain specialist. This repo demonstrates how to:
 
-**Included:** The `skill-test` skill in `.claude/skills/skill-test/` verifies the skills system is working.
+1. **Store skills in R2** - User skills persist in R2 object storage
+2. **Load at runtime** - Skills load as filesystem objects before agent starts
+3. **Per-user isolation** - Each user has their own skill collection
 
-**Critical requirement:** The container **cannot run as root** when using `bypassPermissions` mode. The Claude CLI explicitly rejects the `--dangerously-skip-permissions` flag (which bypass mode maps to) when running as root user. This is a security measure to prevent accidental privilege escalation. The Dockerfile switches to the `node` user before running the agent (`USER node`).
+**How it works:**
 
-**Key setup requirements:**
+```typescript
+// Development: Write skills to sandbox filesystem
+await sandbox.writeFile('/workspace/.claude/skills/my-skill.md', content);
 
-- `.claude/skills/` directory copied into container (see `Dockerfile`:21)
-- `settingSources: ['local', 'project']` in query options (see `container/server.ts`:36)
-- `permissionMode: 'bypassPermissions'` for autonomous operation (see `container/server.ts`:37)
-- Container runs as non-root user: `USER node` (see `Dockerfile`:25)
-
-**Test it:**
-
-```bash
-./test-skill.sh 8787
+// Production: Mount entire R2 bucket
+await sandbox.mountBucket("claude-agent-user-data", "/workspace/.claude");
 ```
 
-## Deploy
+Skills must exist as **real filesystem objects** at `/workspace/.claude/skills/` before the agent starts, as the SDK discovers them during initialization.
+
+**Managing skills:**
 
 ```bash
+# Upload a skill for a user
+curl -X POST http://localhost:8787/users/test-user/skills \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-skill.md", "content": "# My Skill\nInstructions..."}'
+
+# List user skills
+curl http://localhost:8787/users/test-user/skills \
+  -H "Authorization: Bearer your-api-key"
+```
+
+For complete API documentation, see **[API-REFERENCE.md](./API-REFERENCE.md)**
+
+For R2 setup and configuration, see **[README-R2-SETUP.md](./README-R2-SETUP.md)**
+
+## Deploy to Production
+
+```bash
+# 1. Set up R2 bucket (if not already done)
+npm run setup:r2
+
+# 2. Build everything (container + frontend)
+npm run build
+
+# 3. Set production secrets
+wrangler secret put ANTHROPIC_API_KEY    # Your Anthropic API key
+wrangler secret put API_KEY              # Auth key for API endpoints
+wrangler secret put ENVIRONMENT          # Set to "production"
+
+# Optional secrets
+wrangler secret put MODEL                # Defaults to claude-sonnet-4-5-20250929
+
+# 4. Deploy
 npm run deploy
-wrangler secret put ANTHROPIC_API_KEY  # Prompts for Anthropic API key
-wrangler secret put API_KEY  # Prompts for your API auth key
-wrangler secret put MODEL  # Optional: defaults to claude-sonnet-4-5-20250929
 ```
+
+**What gets deployed:**
+- Worker with Hono server (`server.ts`)
+- Durable Object for session management
+- Container with Claude Agent SDK
+- Frontend built to `public/` (served by Worker)
+- R2 bucket binding for persistent storage
+
+**Production endpoints:**
+- `https://your-worker.workers.dev/` - Frontend (React app)
+- `https://your-worker.workers.dev/health` - Health check
+- `https://your-worker.workers.dev/ws` - WebSocket connection
+- `https://your-worker.workers.dev/users/:userId/skills` - Skills API
 
 ## Configuration
 
-**Environment variables (.dev.vars for local, wrangler secret for production):**
+### Environment Variables
 
+**Development** (`.dev.vars` file):
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...  # Get from https://console.anthropic.com/settings/keys
-API_KEY=your-secret-key-here  # Your own API auth key for protecting the endpoint
-MODEL=claude-sonnet-4-5-20250929  # Optional, defaults to claude-sonnet-4-5-20250929
+ANTHROPIC_API_KEY=sk-ant-...           # Required: Anthropic API key
+API_KEY=your-secret-key-here           # Required: Auth for API endpoints
+ENVIRONMENT=development                # Required: dev | production
+MODEL=claude-sonnet-4-5-20250929      # Optional: Default Claude model
 ```
 
-### Alternative: OAuth Token (Requires Anthropic Permission)
+**Production** (`wrangler secret`):
+```bash
+wrangler secret put ANTHROPIC_API_KEY
+wrangler secret put API_KEY
+wrangler secret put ENVIRONMENT
+wrangler secret put MODEL  # Optional
+```
 
-If you have permission from Anthropic to use Claude Code OAuth tokens (see [authentication docs](https://docs.claude.com/en/api/agent-sdk/overview#core-concepts)):
+### Alternative: OAuth Token
 
-**Prerequisites:**
+For Claude Code OAuth tokens (requires Anthropic approval):
 
 ```bash
+# Install Claude Code CLI
 npm install -g @anthropic-ai/claude-code
-```
 
-**Setup:**
+# Get OAuth token
+claude setup-token
 
-```bash
-claude setup-token  # Opens browser, copy token from terminal
-cat > .dev.vars << EOF
+# Add to .dev.vars
 CLAUDE_CODE_OAUTH_TOKEN=sk-ant-your-oauth-token-here
-MODEL=claude-sonnet-4-5-20250929
-API_KEY=your-secret-key-here
-EOF
-```
 
-**Deploy:**
-
-```bash
+# Deploy
 wrangler secret put CLAUDE_CODE_OAUTH_TOKEN
 ```
 
-Note: OAuth tokens require prior approval from Anthropic. For most users, use `ANTHROPIC_API_KEY` instead.
+Note: Most users should use `ANTHROPIC_API_KEY` instead.
 
-**server.ts:**
+### Container Configuration
 
-```typescript
-sleepAfter = "5m"; // How long containers stay warm
-const accountId = body.accountId || "default"; // Isolation key
-```
-
-**wrangler.toml:**
+Edit `wrangler.toml` to adjust container resources:
 
 ```toml
 instance_type = "standard-2"  # basic | standard-1/2/3/4
-max_instances = 60
+max_instances = 60            # Max concurrent containers
+```
+
+Edit `server.ts` to adjust container lifecycle:
+
+```typescript
+sleepAfter: "5m"  // How long containers stay warm (5 minutes default)
 ```
 
 ## License

@@ -6,7 +6,14 @@
   "main": "server.ts",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:full": "concurrently \"npm run dev\" \"npm run dev:frontend\"",
+    "build": "npm run build:container && npm run build:frontend",
+    "build:container": "cd container && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    "deploy": "wrangler deploy",
+    "setup:r2": "chmod +x scripts/setup-r2.sh && ./scripts/setup-r2.sh",
+    "install:all": "npm install && cd container && npm install && cd ../frontend && npm install"
   },
   "dependencies": {
     "@cloudflare/sandbox": "^0.5.1",
@@ -15,6 +22,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250110.0",
     "@types/node": "^24.5.2",
+    "concurrently": "^9.1.2",
     "typescript": "^5.9.2"
   }
 }

@@ -13,6 +13,8 @@ import {
 import { fileURLToPath } from "url";
 import { dirname } from "path";
 
+process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+
 
 // ============================================================================ 
 // LOGGING UTILITIES
@@ -182,6 +184,13 @@ class MessageStream implements AsyncIterable<SDKUserMessage> {
   }
 }
 
+interface StoredMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: any;
+  uuid?: string;
+  timestamp: number;
+}
+
 interface SessionState {
   sessionId: string;
   currentSocket: Socket;
@@ -190,6 +199,7 @@ interface SessionState {
   abortController: AbortController;
   isQueryRunning: boolean;
   disconnectTimeout?: NodeJS.Timeout;
+  conversationHistory: StoredMessage[];
 }
 
 const sessions = new Map<string, SessionState>();
@@ -308,7 +318,7 @@ const startAgentQuery = async (sessionId: string, initialOptions: ExtendedOption
         allowedTools: initialOptions.allowedTools || [
           "Read", "Write", "Bash", "Grep", "WebSearch", "WebFetch", "Task",
           "BashOutput", "Edit", "Glob", "KillBash", "NotebookEdit", "TodoWrite",
-          "ExitPlanMode", "ListMcpResources", "ReadMcpResource"
+          "ExitPlanMode", "ListMcpResources", "ReadMcpResource", "Skill"
         ],
         model: initialOptions.model || process.env.CLAUDE_MODEL || "claude-sonnet-4-5-20250929",
         abortController: session.abortController,
@@ -317,18 +327,18 @@ const startAgentQuery = async (sessionId: string, initialOptions: ExtendedOption
         resume: initialOptions.resume,
         maxThinkingTokens: initialOptions.maxThinkingTokens,
         includePartialMessages: initialOptions.includePartialMessages,
-        settingSources: initialOptions.settingSources !== undefined ? initialOptions.settingSources : [],
+        // Enable project settings to discover skills from .claude/skills/
+        settingSources: initialOptions.settingSources !== undefined ? initialOptions.settingSources : ['project'],
         fallbackModel: initialOptions.fallbackModel,
         agents: initialOptions.agents,
         mcpServers: mcpServers,
-        plugins: initialOptions.plugins,
-        outputFormat: initialOptions.outputFormat,
         strictMcpConfig: initialOptions.strictMcpConfig,
         stderr: (data: string) => emitToClient("stderr", data),
         executable: initialOptions.executable,
         executableArgs: initialOptions.executableArgs,
         env: initialOptions.env || process.env,
-        cwd: initialOptions.cwd || process.cwd(),
+        // Use /workspace as cwd so .claude/skills/ resolves correctly
+        cwd: initialOptions.cwd || '/workspace',
         additionalDirectories: initialOptions.additionalDirectories,
         forkSession: initialOptions.forkSession,
         continue: initialOptions.continue,
@@ -362,17 +372,38 @@ const startAgentQuery = async (sessionId: string, initialOptions: ExtendedOption
     for await (const message of q) {
       messageCount++;
       const currentSocketId = getSessionSocket(sessionId)?.id || sessionId;
+
+      // EXPLICIT DEBUG: Log every message from the SDK
+      console.log(`[SDK MESSAGE ${messageCount}] type=${message.type}`);
       log.sdkMessage(currentSocketId, message.type, { messageNumber: messageCount });
 
       // Use emitToClient to ensure it goes to the current socket
       switch (message.type) {
         case "stream_event":
           const event = message.event;
+          console.log(`[STREAM_EVENT] event.type=${event.type}, delta.type=${event.delta?.type}, index=${event.index}`);
           log.debug(`Stream event: ${event.type}`, undefined, currentSocketId);
-          if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
-            log.outgoing(currentSocketId, 'stream', { type: 'text', contentLength: event.delta.text?.length });
-            emitToClient("stream", { type: "text", content: event.delta.text });
+
+          // Handle text streaming - check for various delta formats
+          if (event.type === "content_block_delta") {
+            const delta = event.delta;
+            if (delta?.type === "text_delta" && delta?.text) {
+              console.log(`[STREAMING TEXT] Emitting ${delta.text.length} chars: "${delta.text.substring(0, 30)}..."`);
+              log.outgoing(currentSocketId, 'stream', { type: 'text', contentLength: delta.text.length });
+              emitToClient("stream", { type: "text", content: delta.text });
+            } else if (delta?.type === "input_json_delta" && delta?.partial_json) {
+              // Tool input streaming
+              console.log(`[STREAMING JSON] Tool input delta`);
+              emitToClient("stream", { type: "json", content: delta.partial_json });
+            } else {
+              console.log(`[STREAM_EVENT] Unhandled delta type: ${delta?.type}`);
+            }
+          } else if (event.type === "content_block_start") {
+            console.log(`[STREAM_EVENT] Content block start, index=${event.index}, type=${event.content_block?.type}`);
+          } else if (event.type === "content_block_stop") {
+            console.log(`[STREAM_EVENT] Content block stop, index=${event.index}`);
           }
+
           log.outgoing(currentSocketId, 'stream_event', { eventType: event.type });
           emitToClient("stream_event", message);
           break;
@@ -381,6 +412,15 @@ const startAgentQuery = async (sessionId: string, initialOptions: ExtendedOption
             uuid: message.uuid,
             contentBlocks: Array.isArray(message.message.content) ? message.message.content.length : 1
           });
+          // Store assistant message in history
+          if (session) {
+            session.conversationHistory.push({
+              role: 'assistant',
+              content: message.message.content,
+              uuid: message.uuid,
+              timestamp: Date.now()
+            });
+          }
           emitToClient("message", { role: "assistant", content: message.message.content, uuid: message.uuid });
           break;
         case "user":
@@ -404,7 +444,7 @@ const startAgentQuery = async (sessionId: string, initialOptions: ExtendedOption
           emitToClient("result", message);
           break;
         default:
-          log.outgoing(currentSocketId, 'sdk_event', { type: message.type });
+          log.outgoing(currentSocketId, 'sdk_event', { type: (message as any).type });
           emitToClient("sdk_event", message);
           break;
       }
@@ -463,6 +503,12 @@ io.on("connection", (socket: Socket) => {
 
     socket.emit("status", { type: "info", message: "Session resumed" });
 
+    // Send conversation history on reconnect
+    if (session.conversationHistory.length > 0) {
+      log.outgoing(socket.id, 'history', { messageCount: session.conversationHistory.length });
+      socket.emit("history", { messages: session.conversationHistory });
+    }
+
   } else {
     // NEW SESSION
     log.info(`Creating new session for ${effectiveSessionId}`, socket.id);
@@ -472,7 +518,8 @@ io.on("connection", (socket: Socket) => {
       queryIterator: null,
       messageStream: null,
       abortController: new AbortController(),
-      isQueryRunning: false
+      isQueryRunning: false,
+      conversationHistory: []
     });
   }
 
@@ -501,6 +548,15 @@ io.on("connection", (socket: Socket) => {
       promptPreview: userPrompt?.substring(0, 100),
       hasOptions: Object.keys(options).length > 0,
       optionKeys: Object.keys(options)
+    });
+
+    // Store user message in history
+    const userUuid = crypto.randomUUID();
+    session.conversationHistory.push({
+      role: 'user',
+      content: userPrompt,
+      uuid: userUuid,
+      timestamp: Date.now()
     });
 
     if (!session.isQueryRunning) {
@@ -550,6 +606,18 @@ io.on("connection", (socket: Socket) => {
     }
   });
 
+  // Handle 'get_history' - Send conversation history to client
+  socket.on("get_history", () => {
+    log.incoming(socket.id, 'get_history');
+    const session = sessions.get(effectiveSessionId);
+    if (session) {
+      log.outgoing(socket.id, 'history', { messageCount: session.conversationHistory.length });
+      socket.emit("history", { messages: session.conversationHistory });
+    } else {
+      socket.emit("history", { messages: [] });
+    }
+  });
+
   // Handle 'clear'
   socket.on("clear", async () => {
     log.incoming(socket.id, 'clear');
@@ -567,10 +635,7 @@ io.on("connection", (socket: Socket) => {
       session.isQueryRunning = false;
       session.queryIterator = null;
       session.messageStream = null; // Will be recreated on next start
-
-      // We might want to delete the session entirely and let it be recreated?
-      // Or just reset its internal state.
-      // For now, let's keep the session object but reset its components.
+      session.conversationHistory = []; // Clear conversation history
 
       log.info(`Session cleared`, socket.id);
       const statusPayload = { type: "info", message: "Session cleared" };
@@ -597,7 +662,7 @@ io.on("connection", (socket: Socket) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   log.info(`Server started on port ${PORT}`);
   console.log(`\n🚀 Claude Agent SDK Web Interface`);
