@@ -242,18 +242,35 @@ const startAgentQuery = async (sessionId: string, initialOptions: ExtendedOption
     }
   };
 
+  // Track if we've sent the SDK session_id to the client
+  let sdkSessionIdSent = false;
+
   try {
     // Define hooks
     const createHook = (eventName: string) => async (input: any) => {
       const currentSocket = getSessionSocket(sessionId);
+
+      // CRITICAL: Capture SDK's session_id from hook event data and send to frontend
+      // The SDK provides session_id in hook event data (like UserPromptSubmit, Stop, etc.)
+      if (input?.session_id && !sdkSessionIdSent && currentSocket?.connected) {
+        const sdkSessionId = input.session_id;
+        console.log(`[SDK SESSION] Captured SDK session_id from ${eventName} hook: ${sdkSessionId}`);
+        log.outgoing(currentSocket.id, 'message[system/init]', { sdk_session_id: sdkSessionId });
+        currentSocket.emit("message", {
+          role: "system",
+          subtype: "init",
+          session_id: sdkSessionId  // This is the REAL SDK session ID for resumption
+        });
+        sdkSessionIdSent = true;
+      }
 
       // If session aborted, stop
       if (session.abortController.signal.aborted) {
         return {};
       }
 
-      // If socket disconnected, we wait for reconnection or timeout? 
-      // For now, let's fail fast if no socket, OR we could wait a bit? 
+      // If socket disconnected, we wait for reconnection or timeout?
+      // For now, let's fail fast if no socket, OR we could wait a bit?
       // Given the requirement "don't quit easily", waiting for reconnection inside the hook would be ideal.
       // But that's complicated. Let's stick to: if no socket, log warning and return continue/empty.
       if (!currentSocket || !currentSocket.connected) {
@@ -310,6 +327,13 @@ const startAgentQuery = async (sessionId: string, initialOptions: ExtendedOption
 
     // Process client-defined tools - REMOVED
     const mcpServers = initialOptions.mcpServers || {};
+
+    // DEBUG: Log if we're resuming a session
+    if (initialOptions.resume) {
+      console.log(`[SDK QUERY] Starting query with RESUME session_id: ${initialOptions.resume}`);
+    } else {
+      console.log(`[SDK QUERY] Starting NEW query (no resume)`);
+    }
 
     const q = query({
       prompt: session.messageStream,
@@ -429,9 +453,34 @@ const startAgentQuery = async (sessionId: string, initialOptions: ExtendedOption
           emitToClient("message", { role: "user", content: message.message.content, uuid: message.uuid });
           break;
         case "system":
+          // DEBUG: Log the FULL system message structure to understand SDK format
+          console.log(`[SDK SYSTEM MESSAGE] Full structure:`, JSON.stringify(message, null, 2));
+
           if (message.subtype === 'compact_boundary') {
             log.outgoing(currentSocketId, 'compact_boundary', { subtype: message.subtype });
             emitToClient("compact_boundary", message);
+          } else if (message.subtype === 'init') {
+            // CRITICAL: Forward SDK's real session_id via 'message' event so frontend can capture it
+            // Try multiple possible locations for session_id
+            const sdkSessionId = (message as any).session_id ||
+                                 (message as any).data?.session_id ||
+                                 (message as any).sessionId;
+
+            console.log(`[SDK INIT] session_id found: ${sdkSessionId}`);
+            console.log(`[SDK INIT] message.session_id: ${(message as any).session_id}`);
+            console.log(`[SDK INIT] message.data?.session_id: ${(message as any).data?.session_id}`);
+
+            if (sdkSessionId) {
+              log.outgoing(currentSocketId, 'message[system/init]', { sdk_session_id: sdkSessionId });
+              emitToClient("message", {
+                role: "system",
+                subtype: "init",
+                session_id: sdkSessionId  // This is the REAL SDK session ID for resumption
+              });
+            } else {
+              console.error(`[SDK INIT] WARNING: No session_id found in init message!`);
+              emitToClient("system", message);
+            }
           } else {
             log.outgoing(currentSocketId, 'system', { subtype: (message as any).subtype });
             emitToClient("system", message);
@@ -495,13 +544,7 @@ io.on("connection", (socket: Socket) => {
       log.info(`Cancelled disconnect timeout for ${effectiveSessionId}`);
     }
 
-    // Send history? (Not strictly stored here other than what SDK sends, but frontend should have it)
-    // But if frontend refreshed, it lost memory state. 
-    // We are not storing full history in `session` object here, so we can't replay it easily 
-    // without modifying the MessageStream/Query architecture to buffer history.
-    // For now, let's just re-attach control. The user might see a blank chat but the *agent process* is still running.
-    // To fix blank chat, we'd need to store history.
-
+    // Notify frontend of connection (session_id will come from SDK when query starts)
     socket.emit("status", { type: "info", message: "Session resumed" });
 
     // Send conversation history on reconnect
@@ -522,6 +565,9 @@ io.on("connection", (socket: Socket) => {
       isQueryRunning: false,
       conversationHistory: []
     });
+
+    // Note: The real session_id will come from the SDK's system init message when query() is called
+    // The frontend will capture it and persist to the thread
   }
 
   // Handle 'start'
@@ -585,25 +631,47 @@ io.on("connection", (socket: Socket) => {
     }
   });
 
-  // Handle 'interrupt'
-  socket.on("interrupt", async () => {
-    log.incoming(socket.id, 'interrupt');
+  // Handle 'interrupt' - supports both simple interrupt and thread switch interrupt
+  socket.on("interrupt", async (data?: { threadId?: string; reason?: string }) => {
+    const threadId = data?.threadId;
+    const reason = data?.reason || 'user_interrupt';
+
+    log.incoming(socket.id, 'interrupt', { threadId, reason });
     const session = sessions.get(effectiveSessionId);
-    if (session && session.queryIterator) {
+
+    if (!session) {
+      // No session - just acknowledge completion
+      if (threadId) {
+        socket.emit("interrupt_complete", { threadId, success: true, sessionId: null });
+      }
+      return;
+    }
+
+    if (session.queryIterator) {
       try {
-        log.info(`Interrupting query`, socket.id);
+        log.info(`Interrupting query (reason: ${reason})`, socket.id);
         await session.queryIterator.interrupt();
-        const statusPayload = { type: "info", message: "Interrupted" };
-        log.outgoing(socket.id, 'status', statusPayload);
-        socket.emit("status", statusPayload);
       } catch (err) {
         log.error("Error interrupting query", err, socket.id);
-        const errorPayload = { message: "Failed to interrupt" };
-        log.outgoing(socket.id, 'error', errorPayload);
-        socket.emit("error", errorPayload);
       }
+    }
+
+    // Mark session as not running
+    session.isQueryRunning = false;
+
+    // For thread switch, emit interrupt_complete so frontend can proceed
+    if (threadId) {
+      log.outgoing(socket.id, 'interrupt_complete', { threadId, success: true });
+      socket.emit("interrupt_complete", {
+        threadId,
+        success: true,
+        sessionId: effectiveSessionId
+      });
     } else {
-      log.warn(`No active query to interrupt`, socket.id);
+      // Simple interrupt - emit status
+      const statusPayload = { type: "info", message: "Interrupted" };
+      log.outgoing(socket.id, 'status', statusPayload);
+      socket.emit("status", statusPayload);
     }
   });
 

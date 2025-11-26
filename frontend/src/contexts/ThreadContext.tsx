@@ -22,12 +22,18 @@ export interface ThreadMessage {
   created_at: string;
 }
 
+interface PendingThreadSwitch {
+  targetThreadId: string;
+  targetThread: Thread;
+}
+
 interface ThreadState {
   threads: Thread[];
   currentThreadId: string | null;
   currentThread: Thread | null;
   isLoading: boolean;
   error: string | null;
+  pendingSwitch: PendingThreadSwitch | null;
 }
 
 interface ThreadContextType {
@@ -35,6 +41,9 @@ interface ThreadContextType {
   createThread: (title?: string) => Promise<Thread | null>;
   deleteThread: (threadId: string) => Promise<boolean>;
   switchThread: (threadId: string) => Promise<void>;
+  requestThreadSwitch: (threadId: string, isStreaming: boolean) => { needsConfirmation: boolean };
+  cancelPendingSwitch: () => void;
+  confirmPendingSwitch: () => Promise<string | null>;
   updateThreadTitle: (threadId: string, title: string) => Promise<void>;
   updateThreadSessionId: (threadId: string, sessionId: string) => Promise<void>;
   generateTitle: (threadId: string) => Promise<void>;
@@ -55,6 +64,7 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     currentThread: null,
     isLoading: false,
     error: null,
+    pendingSwitch: null,
   });
 
   // Fetch all threads for the current user
@@ -174,6 +184,52 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     }));
   }, [state.threads]);
 
+  // Request thread switch (checks if confirmation needed)
+  const requestThreadSwitch = useCallback((threadId: string, isStreaming: boolean): { needsConfirmation: boolean } => {
+    const thread = state.threads.find(t => t.id === threadId);
+    if (!thread) {
+      console.warn('[ThreadContext] Thread not found:', threadId);
+      return { needsConfirmation: false };
+    }
+
+    if (isStreaming) {
+      // Need confirmation - set pending switch
+      setState(prev => ({
+        ...prev,
+        pendingSwitch: { targetThreadId: threadId, targetThread: thread },
+      }));
+      return { needsConfirmation: true };
+    }
+
+    // No streaming - switch immediately
+    setState(prev => ({
+      ...prev,
+      currentThreadId: threadId,
+      currentThread: thread,
+    }));
+    return { needsConfirmation: false };
+  }, [state.threads]);
+
+  // Cancel pending switch
+  const cancelPendingSwitch = useCallback(() => {
+    setState(prev => ({ ...prev, pendingSwitch: null }));
+  }, []);
+
+  // Confirm and execute pending switch
+  const confirmPendingSwitch = useCallback(async (): Promise<string | null> => {
+    const pending = state.pendingSwitch;
+    if (!pending) return null;
+
+    setState(prev => ({
+      ...prev,
+      pendingSwitch: null,
+      currentThreadId: pending.targetThreadId,
+      currentThread: pending.targetThread,
+    }));
+
+    return pending.targetThreadId;
+  }, [state.pendingSwitch]);
+
   // Update thread title
   const updateThreadTitle = useCallback(async (threadId: string, title: string): Promise<void> => {
     try {
@@ -274,6 +330,9 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
         createThread,
         deleteThread,
         switchThread,
+        requestThreadSwitch,
+        cancelPendingSwitch,
+        confirmPendingSwitch,
         updateThreadTitle,
         updateThreadSessionId,
         generateTitle,

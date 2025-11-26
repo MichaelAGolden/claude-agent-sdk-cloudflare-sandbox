@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { PlusIcon, TrashIcon, MessageSquareIcon, PencilIcon, CheckIcon, XIcon } from "lucide-react";
 import { useThreads } from "@/contexts/ThreadContext";
+import { useAgent } from "@/contexts/AgentContext";
+import { ConfirmThreadSwitch } from "@/components/ConfirmThreadSwitch";
 import {
   Sidebar,
   SidebarContent,
@@ -20,11 +22,28 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export function ThreadListSidebar() {
-  const { state, createThread, deleteThread, switchThread, updateThreadTitle } = useThreads();
-  const { threads, currentThreadId, isLoading } = state;
+  const { state, createThread, deleteThread, requestThreadSwitch, cancelPendingSwitch, confirmPendingSwitch, updateThreadTitle } = useThreads();
+  const { threads, currentThreadId, isLoading, pendingSwitch } = state;
+
+  const { state: agentState, interruptForSwitch } = useAgent();
+  const { isStreaming } = agentState;
 
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+
+  const handleSwitchThread = (threadId: string) => {
+    if (threadId === currentThreadId) return;
+    requestThreadSwitch(threadId, isStreaming);
+  };
+
+  const handleConfirmSwitch = async () => {
+    // Interrupt current conversation if streaming
+    if (isStreaming && currentThreadId) {
+      await interruptForSwitch(currentThreadId);
+    }
+    // Execute the switch
+    await confirmPendingSwitch();
+  };
 
   const handleNewThread = async () => {
     await createThread();
@@ -120,7 +139,7 @@ export function ThreadListSidebar() {
                 threads.map((thread) => (
                   <SidebarMenuItem key={thread.id}>
                     <SidebarMenuButton
-                      onClick={() => switchThread(thread.id)}
+                      onClick={() => handleSwitchThread(thread.id)}
                       isActive={currentThreadId === thread.id}
                       className={cn(
                         "group/item flex flex-col items-start gap-0.5 h-auto py-2",
@@ -203,6 +222,14 @@ export function ThreadListSidebar() {
           {threads.length} conversation{threads.length !== 1 ? "s" : ""}
         </div>
       </SidebarFooter>
+
+      {/* Confirmation dialog for switching during active conversation */}
+      <ConfirmThreadSwitch
+        isOpen={!!pendingSwitch}
+        targetThreadTitle={pendingSwitch?.targetThread.title || ''}
+        onCancel={cancelPendingSwitch}
+        onConfirm={handleConfirmSwitch}
+      />
     </Sidebar>
   );
 }
