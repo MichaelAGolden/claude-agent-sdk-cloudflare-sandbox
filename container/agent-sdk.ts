@@ -200,6 +200,9 @@ interface SessionState {
   isQueryRunning: boolean;
   disconnectTimeout?: NodeJS.Timeout;
   conversationHistory: StoredMessage[];
+  // Track which SDK session the current query is using
+  // This is different from sessionId (which is the sandbox/container ID)
+  currentSdkSessionId: string | null;
 }
 
 const sessions = new Map<string, SessionState>();
@@ -563,7 +566,8 @@ io.on("connection", (socket: Socket) => {
       messageStream: null,
       abortController: new AbortController(),
       isQueryRunning: false,
-      conversationHistory: []
+      conversationHistory: [],
+      currentSdkSessionId: null
     });
 
     // Note: The real session_id will come from the SDK's system init message when query() is called
@@ -594,10 +598,49 @@ io.on("connection", (socket: Socket) => {
       promptLength: userPrompt?.length,
       promptPreview: userPrompt?.substring(0, 100),
       hasOptions: Object.keys(options).length > 0,
-      optionKeys: Object.keys(options)
+      optionKeys: Object.keys(options),
+      resumeSessionId: options.resume
     });
 
-    // Store user message in history
+    // CRITICAL: Check if SDK session changed (thread switch)
+    // The resume option contains the SDK session ID for the thread
+    const requestedSdkSessionId = options.resume || null;
+    const sessionChanged = requestedSdkSessionId !== session.currentSdkSessionId;
+
+    if (sessionChanged) {
+      log.info(`SDK session changing from ${session.currentSdkSessionId} to ${requestedSdkSessionId}`, socket.id);
+
+      // If query is running with old session, we MUST stop it
+      if (session.isQueryRunning) {
+        log.info(`Stopping current query to switch SDK sessions`, socket.id);
+
+        // Interrupt current query
+        if (session.queryIterator) {
+          try {
+            await session.queryIterator.interrupt();
+          } catch (err) {
+            log.error("Error interrupting query for session switch", err, socket.id);
+          }
+        }
+
+        // Clean up query state
+        session.isQueryRunning = false;
+        session.queryIterator = null;
+        if (session.messageStream) {
+          session.messageStream.finish();
+        }
+        session.messageStream = null;
+      }
+
+      // Clear conversation history - it belongs to the old thread
+      // The new thread's messages are loaded from D1 by the frontend
+      session.conversationHistory = [];
+
+      // Update tracked SDK session
+      session.currentSdkSessionId = requestedSdkSessionId;
+    }
+
+    // Store user message in history (for this thread)
     const userUuid = crypto.randomUUID();
     session.conversationHistory.push({
       role: 'user',
@@ -607,7 +650,7 @@ io.on("connection", (socket: Socket) => {
     });
 
     if (!session.isQueryRunning) {
-      log.info(`No query running, starting new query loop`, socket.id);
+      log.info(`Starting new query loop with SDK session: ${requestedSdkSessionId}`, socket.id);
       startAgentQuery(effectiveSessionId, options);
       await new Promise(resolve => setTimeout(resolve, 10));
     }
