@@ -1,5 +1,6 @@
--- Initial schema for persistent chat threads
--- Migration: 0001_initial_schema
+-- ezagentsdk Database Schema
+-- Run this once to set up the D1 database:
+--   npx wrangler d1 execute <your-db-name> --remote --file=migrations/schema.sql
 
 -- Users table (synced from Clerk)
 CREATE TABLE IF NOT EXISTS users (
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS threads (
   summary TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  deleted_at DATETIME DEFAULT NULL, -- Soft delete (preserves data for usage tracking)
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
@@ -33,4 +35,5 @@ CREATE TABLE IF NOT EXISTS messages (
 
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_threads_user ON threads(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_threads_deleted ON threads(user_id, deleted_at);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, created_at);

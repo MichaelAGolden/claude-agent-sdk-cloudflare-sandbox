@@ -96,9 +96,8 @@ fi
 echo ""
 echo "🗄️  Step 4: Running database migrations..."
 echo ""
-echo "Note: Run these commands manually for remote database:"
-echo "  npx wrangler d1 execute claude-agent-threads --remote --file=migrations/0001_initial.sql"
-echo "  npx wrangler d1 execute claude-agent-threads --remote --file=migrations/0002_soft_delete.sql"
+echo "Note: Run this command manually for remote database:"
+echo "  npx wrangler d1 execute claude-agent-threads --remote --file=migrations/schema.sql"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════════════"

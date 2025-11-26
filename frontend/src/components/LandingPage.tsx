@@ -655,9 +655,8 @@ npx wrangler secret put ANTHROPIC_API_KEY`}
               </h3>
               <div className="bg-zinc-950 dark:bg-zinc-900 rounded-lg p-4 font-mono text-sm">
                 <pre className="text-zinc-300">
-{`# Run database migrations
-npx wrangler d1 execute my-agent-db --remote --file=migrations/0001_initial.sql
-npx wrangler d1 execute my-agent-db --remote --file=migrations/0002_soft_delete.sql
+{`# Run database migration
+npx wrangler d1 execute my-agent-db --remote --file=migrations/schema.sql
 
 # Deploy everything
 npm run deploy`}
