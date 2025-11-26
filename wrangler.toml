@@ -31,3 +31,8 @@ database_id = "fb71cfbf-46dc-4fce-a8b0-bbe5fc303d47"
 binding = "USER_DATA"
 bucket_name = "claude-agent-user-data"
 # Stores: /users/{userId}/skills/, /users/{userId}/conversations/, /users/{userId}/settings/
+
+# Environment variables
+[vars]
+ENVIRONMENT = "production"
+PUBLIC_URL = "https://claude-agent-worker.michael-a-golden.workers.dev"
