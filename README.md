@@ -1,6 +1,13 @@
-# Claude Agent SDK + Cloudflare Sandbox
+# ezagentsdk - Claude Agent SDK on Cloudflare
 
-A production-ready monorepo integrating the Claude Agent SDK with Cloudflare Sandbox containers, featuring a React frontend, WebSocket streaming, and R2-backed persistent storage for user skills, conversations, and settings.
+[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Live Demo](https://img.shields.io/badge/Demo-ezagentsdk.com-orange.svg)](https://ezagentsdk.com)
+
+A production-ready reference implementation showing how easy it is to deploy the Claude Agent SDK on Cloudflare's edge infrastructure. Features persistent conversations, real-time streaming, and the full Cloudflare stack.
+
+**Live Demo:** [ezagentsdk.com](https://ezagentsdk.com)
+
+> This project was inspired by and extended from [receipting/claude-agent-sdk-cloudflare](https://github.com/receipting/claude-agent-sdk-cloudflare).
 
 ## Why Cloudflare Sandbox?
 
@@ -26,32 +33,28 @@ This architecture lets you triage requests at the Worker level (SQL queries, cac
 ## Quick Start
 
 ```bash
-# 1. Install Cloudflare CLI
-npm install -g wrangler
+# 1. Clone the repository
+git clone https://github.com/MichaelAGolden/claude-agent-sdk-cloudflare-sandbox
+cd claude-agent-sdk-cloudflare-sandbox
 
-# 2. Clone and install all dependencies
-npm run install:all
+# 2. Run the setup script (creates resources, installs deps)
+npm run setup
 
-# 3. Create environment variables
-cat > .dev.vars << EOF
-ANTHROPIC_API_KEY=sk-ant-your-api-key-here
-MODEL=claude-sonnet-4-5-20250929
-API_KEY=your-secret-key-here
-ENVIRONMENT=development
-EOF
+# 3. Add your API keys to the created files:
+#    - .dev.vars: Add your ANTHROPIC_API_KEY
+#    - frontend/.env.local: Add your VITE_CLERK_PUBLISHABLE_KEY
 
-# 4. (Optional) Set up R2 persistent storage
-npm run setup:r2
-
-# 5. Start both frontend and backend
+# 4. Start the development server
 npm run dev:full
 ```
 
 **Then open:** http://localhost:5173
 
-Get your Anthropic API key from https://console.anthropic.com/settings/keys
+**You'll need:**
+- [Anthropic API key](https://console.anthropic.com/settings/keys) - for Claude
+- [Clerk account](https://clerk.com) - for authentication (free tier works)
 
-For detailed setup instructions, see **[DEVELOPMENT.md](./DEVELOPMENT.md)**
+For detailed setup instructions, see **[docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)**
 
 ## Architecture
 
@@ -111,14 +114,14 @@ claude-agent-sdk-cloudflare-sandbox/
 
 ## Documentation
 
-- **[DEVELOPMENT.md](./DEVELOPMENT.md)** - Complete development setup guide
-- **[README-R2-SETUP.md](./README-R2-SETUP.md)** - R2 storage configuration and usage
-- **[API-REFERENCE.md](./API-REFERENCE.md)** - Complete API documentation
-- **[IMPLEMENTATION-SUMMARY.md](./IMPLEMENTATION-SUMMARY.md)** - Technical implementation overview
+- **[docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)** - Complete development setup guide
+- **[docs/README-R2-SETUP.md](./docs/README-R2-SETUP.md)** - R2 storage configuration and usage
+- **[docs/API-REFERENCE.md](./docs/API-REFERENCE.md)** - Complete API documentation
+- **[docs/IMPLEMENTATION-SUMMARY.md](./docs/IMPLEMENTATION-SUMMARY.md)** - Technical implementation overview
 
 ## Troubleshooting
 
-See **[DEVELOPMENT.md - Common Issues](./DEVELOPMENT.md#common-issues)** for detailed troubleshooting, including:
+See **[docs/DEVELOPMENT.md - Common Issues](./docs/DEVELOPMENT.md#common-issues)** for detailed troubleshooting, including:
 
 - "Cannot connect to Worker"
 - "Sandbox not starting"
@@ -165,9 +168,9 @@ curl http://localhost:8787/users/test-user/skills \
   -H "Authorization: Bearer your-api-key"
 ```
 
-For complete API documentation, see **[API-REFERENCE.md](./API-REFERENCE.md)**
+For complete API documentation, see **[docs/API-REFERENCE.md](./docs/API-REFERENCE.md)**
 
-For R2 setup and configuration, see **[README-R2-SETUP.md](./README-R2-SETUP.md)**
+For R2 setup and configuration, see **[docs/README-R2-SETUP.md](./docs/README-R2-SETUP.md)**
 
 ## Deploy to Production
 

@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ClerkProvider, SignedIn, SignedOut } from "@clerk/clerk-react";
 import "./index.css";
 import App from "./App.tsx";
-import { SignInPage } from "./components/SignInPage.tsx";
+import { LandingPage } from "./components/LandingPage.tsx";
 import { ThemeProvider } from "./components/theme-provider";
 import { AgentProvider } from "./contexts/AgentContext";
 import { ThreadProvider } from "./contexts/ThreadContext";
@@ -34,7 +34,7 @@ createRoot(document.getElementById("root")!).render(
             <AuthenticatedApp />
           </SignedIn>
           <SignedOut>
-            <SignInPage />
+            <LandingPage />
           </SignedOut>
         </ClerkProvider>
       ) : (

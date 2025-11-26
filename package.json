@@ -5,6 +5,7 @@
   "type": "module",
   "main": "server.ts",
   "scripts": {
+    "setup": "chmod +x scripts/setup.sh && ./scripts/setup.sh",
     "dev": "wrangler dev",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:full": "concurrently \"npm run dev\" \"npm run dev:frontend\"",
@@ -12,6 +13,7 @@
     "build:container": "cd container && npm run build",
     "build:frontend": "cd frontend && npm run build",
     "deploy": "wrangler deploy",
+    "deploy:frontend": "cd frontend && npm run build && npx wrangler deploy",
     "setup:r2": "chmod +x scripts/setup-r2.sh && ./scripts/setup-r2.sh",
     "install:all": "npm install && cd container && npm install && cd ../frontend && npm install"
   },
