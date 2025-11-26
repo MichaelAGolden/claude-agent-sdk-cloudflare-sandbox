@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { PlusIcon, TrashIcon, MessageSquareIcon, PencilIcon, CheckIcon, XIcon } from "lucide-react";
+import { PlusIcon, TrashIcon, MessageSquareIcon, PencilIcon, CheckIcon, XIcon, MoreHorizontalIcon } from "lucide-react";
 import { useThreads } from "@/contexts/ThreadContext";
 import { useAgent } from "@/contexts/AgentContext";
 import { ConfirmThreadSwitch } from "@/components/ConfirmThreadSwitch";
+import { ConfirmDeleteThread } from "@/components/ConfirmDeleteThread";
 import {
   Sidebar,
   SidebarContent,
@@ -11,11 +12,17 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuAction,
   SidebarGroup,
   SidebarGroupLabel,
   SidebarGroupContent,
 } from "@/components/ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +37,8 @@ export function ThreadListSidebar() {
 
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [pendingDeleteThread, setPendingDeleteThread] = useState<{ id: string; title: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleSwitchThread = (threadId: string) => {
     if (threadId === currentThreadId) return;
@@ -49,17 +58,19 @@ export function ThreadListSidebar() {
     await createThread();
   };
 
-  const handleDeleteThread = async (e: React.MouseEvent, threadId: string) => {
-    e.stopPropagation();
-    if (confirm("Delete this conversation?")) {
-      await deleteThread(threadId);
-    }
+  const handleCancelDelete = () => {
+    setPendingDeleteThread(null);
   };
 
-  const handleStartEdit = (e: React.MouseEvent, thread: { id: string; title: string }) => {
-    e.stopPropagation();
-    setEditingThreadId(thread.id);
-    setEditTitle(thread.title);
+  const handleConfirmDelete = async () => {
+    if (!pendingDeleteThread) return;
+    setIsDeleting(true);
+    try {
+      await deleteThread(pendingDeleteThread.id);
+    } finally {
+      setIsDeleting(false);
+      setPendingDeleteThread(null);
+    }
   };
 
   const handleSaveEdit = async (e: React.MouseEvent) => {
@@ -142,7 +153,7 @@ export function ThreadListSidebar() {
                       onClick={() => handleSwitchThread(thread.id)}
                       isActive={currentThreadId === thread.id}
                       className={cn(
-                        "group/item flex flex-col items-start gap-0.5 h-auto py-2",
+                        "flex flex-col items-start gap-0.5 h-auto py-2",
                         currentThreadId === thread.id && "bg-accent"
                       )}
                     >
@@ -192,22 +203,47 @@ export function ThreadListSidebar() {
                       )}
                     </SidebarMenuButton>
 
-                    {/* Action buttons - only show when not editing */}
+                    {/* Actions dropdown - only show when not editing */}
                     {editingThreadId !== thread.id && (
-                      <SidebarMenuAction
-                        className="opacity-0 group-hover/item:opacity-100"
-                        onClick={(e) => handleStartEdit(e, thread)}
-                      >
-                        <PencilIcon className="h-3 w-3" />
-                      </SidebarMenuAction>
-                    )}
-                    {editingThreadId !== thread.id && (
-                      <SidebarMenuAction
-                        className="opacity-0 group-hover/item:opacity-100 text-destructive hover:text-destructive"
-                        onClick={(e) => handleDeleteThread(e, thread.id)}
-                      >
-                        <TrashIcon className="h-3 w-3" />
-                      </SidebarMenuAction>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 opacity-0 group-hover/menu-item:opacity-100 focus:opacity-100",
+                              currentThreadId === thread.id && "opacity-100"
+                            )}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <MoreHorizontalIcon className="h-4 w-4" />
+                            <span className="sr-only">Thread actions</span>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48">
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingThreadId(thread.id);
+                              setEditTitle(thread.title);
+                            }}
+                          >
+                            <PencilIcon className="mr-2 h-4 w-4" />
+                            Rename
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPendingDeleteThread(thread);
+                            }}
+                          >
+                            <TrashIcon className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     )}
                   </SidebarMenuItem>
                 ))
@@ -229,6 +265,15 @@ export function ThreadListSidebar() {
         targetThreadTitle={pendingSwitch?.targetThread.title || ''}
         onCancel={cancelPendingSwitch}
         onConfirm={handleConfirmSwitch}
+      />
+
+      {/* Confirmation dialog for deleting a thread */}
+      <ConfirmDeleteThread
+        isOpen={!!pendingDeleteThread}
+        threadTitle={pendingDeleteThread?.title || ''}
+        onCancel={handleCancelDelete}
+        onConfirm={handleConfirmDelete}
+        isDeleting={isDeleting}
       />
     </Sidebar>
   );

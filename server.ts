@@ -13,6 +13,7 @@ type Bindings = {
   CLERK_SECRET_KEY?: string;
   ACCOUNT_ID?: string;
   ENVIRONMENT?: string; // "development" | "production"
+  PUBLIC_URL?: string;  // Public URL for WebSocket connections
 };
 
 type Skill = {
@@ -95,6 +96,93 @@ const loadSkillsFromR2ToSandbox = async (
   return loaded;
 };
 
+// =============================================================================
+// Session Transcript Sync Helpers
+// =============================================================================
+// The SDK stores transcripts at /root/.claude/projects/-workspace/<session_id>.jsonl
+// We sync these to/from R2 at session start/end for persistence
+
+// Helper: Get R2 key for a session transcript
+const getTranscriptR2Key = (userId: string, sessionId: string): string => {
+  return `users/${userId}/transcripts/${sessionId}.jsonl`;
+};
+
+// Helper: Get the local path where SDK stores transcripts
+const getTranscriptLocalPath = (sessionId: string): string => {
+  return `/root/.claude/projects/-workspace/${sessionId}.jsonl`;
+};
+
+// Helper: Restore transcript from R2 to sandbox (call BEFORE SDK query with resume)
+const restoreTranscriptFromR2 = async (
+  sandbox: Sandbox,
+  bucket: R2Bucket,
+  userId: string,
+  sessionId: string
+): Promise<boolean> => {
+  try {
+    const r2Key = getTranscriptR2Key(userId, sessionId);
+    const obj = await bucket.get(r2Key);
+
+    if (!obj) {
+      console.log(`[Transcript] No transcript found in R2 for session ${sessionId}`);
+      return false;
+    }
+
+    const content = await obj.text();
+    const localPath = getTranscriptLocalPath(sessionId);
+
+    // Ensure the directory exists
+    await sandbox.mkdir("/root/.claude/projects/-workspace", { recursive: true });
+
+    // Write transcript to local path
+    await sandbox.writeFile(localPath, content);
+    console.log(`[Transcript] Restored transcript from R2: ${r2Key} -> ${localPath}`);
+    return true;
+  } catch (error: any) {
+    console.error(`[Transcript] Failed to restore from R2:`, error.message);
+    return false;
+  }
+};
+
+// Helper: Save transcript from sandbox to R2 (call AFTER session ends)
+const saveTranscriptToR2 = async (
+  sandbox: Sandbox,
+  bucket: R2Bucket,
+  userId: string,
+  sessionId: string
+): Promise<boolean> => {
+  try {
+    const localPath = getTranscriptLocalPath(sessionId);
+
+    // Check if transcript exists
+    const exists = await sandbox.exists(localPath);
+    if (!exists.exists) {
+      console.log(`[Transcript] No local transcript to save for session ${sessionId}`);
+      return false;
+    }
+
+    // Read transcript from sandbox
+    const file = await sandbox.readFile(localPath);
+    const r2Key = getTranscriptR2Key(userId, sessionId);
+
+    // Save to R2
+    await bucket.put(r2Key, file.content, {
+      httpMetadata: { contentType: "application/jsonl" },
+      customMetadata: {
+        userId,
+        sessionId,
+        savedAt: new Date().toISOString(),
+      },
+    });
+
+    console.log(`[Transcript] Saved transcript to R2: ${localPath} -> ${r2Key}`);
+    return true;
+  } catch (error: any) {
+    console.error(`[Transcript] Failed to save to R2:`, error.message);
+    return false;
+  }
+};
+
 app.get("/health", (c) => {
   return c.json({
     status: "healthy",
@@ -104,6 +192,23 @@ app.get("/health", (c) => {
     hasR2: !!c.env?.USER_DATA,
     hasD1: !!c.env?.DB,
     timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * Worker info endpoint - provides public URL for WebSocket connections.
+ * Called by frontend worker via service binding to discover backend URL.
+ *
+ * GET /_info
+ */
+app.get("/_info", (c) => {
+  // Use configured PUBLIC_URL, or try to derive from request URL
+  const publicUrl = c.env.PUBLIC_URL || new URL(c.req.url).origin;
+
+  return c.json({
+    publicUrl,
+    socketPath: "/socket.io/",
+    environment: c.env.ENVIRONMENT || "development",
   });
 });
 
@@ -126,7 +231,7 @@ app.get("/api/threads", async (c) => {
     const result = await c.env.DB.prepare(
       `SELECT id, user_id, session_id, title, summary, created_at, updated_at
        FROM threads
-       WHERE user_id = ?
+       WHERE user_id = ? AND deleted_at IS NULL
        ORDER BY updated_at DESC`
     ).bind(userId).all<Thread>();
 
@@ -275,7 +380,11 @@ app.patch("/api/threads/:id", async (c) => {
 });
 
 /**
- * Delete a thread and all its messages.
+ * Delete a thread (soft delete).
+ *
+ * - Soft deletes the thread in D1 (sets deleted_at timestamp)
+ * - Deletes R2 transcript for the session if it exists
+ * - D1 data is preserved for usage tracking
  *
  * DELETE /api/threads/:id
  */
@@ -283,12 +392,43 @@ app.delete("/api/threads/:id", async (c) => {
   try {
     const threadId = c.req.param("id");
 
-    // Messages are deleted via CASCADE constraint
-    await c.env.DB.prepare(
-      `DELETE FROM threads WHERE id = ?`
-    ).bind(threadId).run();
+    // Get thread info before soft-deleting (need user_id and session_id for R2 cleanup)
+    const thread = await c.env.DB.prepare(
+      `SELECT id, user_id, session_id FROM threads WHERE id = ? AND deleted_at IS NULL`
+    ).bind(threadId).first<{ id: string; user_id: string; session_id: string | null }>();
 
-    return c.json({ status: "deleted", threadId });
+    if (!thread) {
+      return c.json({ error: "Thread not found" }, 404);
+    }
+
+    // Delete R2 transcript if session exists (cleanup conversation context)
+    let r2Deleted = false;
+    if (thread.session_id && c.env.USER_DATA) {
+      try {
+        const r2Key = getTranscriptR2Key(thread.user_id, thread.session_id);
+        await c.env.USER_DATA.delete(r2Key);
+        r2Deleted = true;
+        console.log(`[Delete Thread] Deleted R2 transcript: ${r2Key}`);
+      } catch (r2Error: any) {
+        // Log but don't fail - R2 cleanup is best-effort
+        console.error(`[Delete Thread] Failed to delete R2 transcript:`, r2Error.message);
+      }
+    }
+
+    // Soft delete: set deleted_at timestamp instead of hard delete
+    // This preserves D1 data for usage tracking
+    const now = new Date().toISOString();
+    await c.env.DB.prepare(
+      `UPDATE threads SET deleted_at = ? WHERE id = ?`
+    ).bind(now, threadId).run();
+
+    return c.json({
+      status: "deleted",
+      threadId,
+      deletedAt: now,
+      r2Deleted,
+      preservedForTracking: true,
+    });
   } catch (error: any) {
     console.error("[Delete Thread Error]", error);
     return c.json({ error: error.message }, 500);
@@ -336,6 +476,107 @@ app.post("/api/threads/:id/messages", async (c) => {
     });
   } catch (error: any) {
     console.error("[Add Message Error]", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =============================================================================
+// Session Transcript Sync API Endpoints
+// =============================================================================
+
+/**
+ * Restore a session transcript from R2 to sandbox.
+ * Call this BEFORE sending a message with `resume` option.
+ *
+ * POST /api/sessions/:sandboxSessionId/restore
+ * Body: { userId: "xxx", sdkSessionId: "xxx" }
+ *
+ * The sandboxSessionId is the ID used to get the sandbox (typically threadId).
+ * The sdkSessionId is the Claude SDK's session_id for transcript lookup.
+ */
+app.post("/api/sessions/:sandboxSessionId/restore", async (c) => {
+  try {
+    const sandboxSessionId = c.req.param("sandboxSessionId");
+    const body = await c.req.json<{ userId: string; sdkSessionId: string }>();
+
+    if (!body.userId || !body.sdkSessionId) {
+      return c.json({ error: "userId and sdkSessionId are required" }, 400);
+    }
+
+    // Check if running in production (R2 sync available)
+    if (!isProduction(c.env)) {
+      return c.json({
+        status: "skipped",
+        reason: "R2 sync not available in development mode",
+        sandboxSessionId,
+        sdkSessionId: body.sdkSessionId,
+      });
+    }
+
+    const sandbox = getSandbox(c.env.Sandbox, sandboxSessionId);
+    const restored = await restoreTranscriptFromR2(
+      sandbox,
+      c.env.USER_DATA,
+      body.userId,
+      body.sdkSessionId
+    );
+
+    return c.json({
+      status: restored ? "restored" : "not_found",
+      sandboxSessionId,
+      sdkSessionId: body.sdkSessionId,
+      userId: body.userId,
+      localPath: getTranscriptLocalPath(body.sdkSessionId),
+    });
+  } catch (error: any) {
+    console.error("[Restore Transcript Error]", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * Sync (save) a session transcript from sandbox to R2.
+ * Call this on session end / disconnect to persist the transcript.
+ *
+ * POST /api/sessions/:sandboxSessionId/sync
+ * Body: { userId: "xxx", sdkSessionId: "xxx" }
+ */
+app.post("/api/sessions/:sandboxSessionId/sync", async (c) => {
+  try {
+    const sandboxSessionId = c.req.param("sandboxSessionId");
+    const body = await c.req.json<{ userId: string; sdkSessionId: string }>();
+
+    if (!body.userId || !body.sdkSessionId) {
+      return c.json({ error: "userId and sdkSessionId are required" }, 400);
+    }
+
+    // Check if running in production (R2 sync available)
+    if (!isProduction(c.env)) {
+      return c.json({
+        status: "skipped",
+        reason: "R2 sync not available in development mode",
+        sandboxSessionId,
+        sdkSessionId: body.sdkSessionId,
+      });
+    }
+
+    const sandbox = getSandbox(c.env.Sandbox, sandboxSessionId);
+    const saved = await saveTranscriptToR2(
+      sandbox,
+      c.env.USER_DATA,
+      body.userId,
+      body.sdkSessionId
+    );
+
+    return c.json({
+      status: saved ? "synced" : "no_transcript",
+      sandboxSessionId,
+      sdkSessionId: body.sdkSessionId,
+      userId: body.userId,
+      r2Key: getTranscriptR2Key(body.userId, body.sdkSessionId),
+    });
+  } catch (error: any) {
+    console.error("[Sync Transcript Error]", error);
     return c.json({ error: error.message }, 500);
   }
 });
@@ -438,17 +679,18 @@ app.post("/setup/:sessionId", async (c) => {
     let skillsLoaded: string[] = [];
 
     if (isProduction(c.env)) {
-      // PRODUCTION: Mount R2 bucket as filesystem
-      // This makes all user data available as real files
+      // PRODUCTION: Mount R2 bucket for SKILLS only (read-heavy, not actively written)
+      // NOTE: We do NOT mount /root/.claude/ for SDK transcripts because:
+      //   - The SDK actively reads/writes transcript files during conversations
+      //   - Mounted storage has network latency on every file operation
+      //   - Better to sync transcripts to/from R2 at session start/end
       try {
+        // Mount for skills at /workspace/.claude/ (read-only recommended for stability)
         await sandbox.mountBucket("claude-agent-user-data", "/workspace/.claude", {
           endpoint: `https://${c.env.ACCOUNT_ID}.r2.cloudflarestorage.com`,
-          // Credentials automatically detected from environment or can be provided
-          // credentials: {
-          //   accessKeyId: c.env.R2_ACCESS_KEY_ID,
-          //   secretAccessKey: c.env.R2_SECRET_ACCESS_KEY,
-          // },
+          readOnly: true, // Skills are read-only during operation
         });
+
         setupMethod = "r2_mount";
         // Skills are automatically available at /workspace/.claude/users/{userId}/skills/
       } catch (err: any) {
@@ -459,6 +701,10 @@ app.post("/setup/:sessionId", async (c) => {
       }
     } else {
       // DEVELOPMENT: Load from R2 via writeFile (R2 mounting not available in wrangler dev)
+      // NOTE: SDK session persistence does NOT work in dev mode because:
+      //   1. R2 mounting requires FUSE support not available in wrangler dev
+      //   2. The SDK stores transcripts in /root/.claude/projects/ which is ephemeral
+      // Session resume will only work in production with R2 mounted.
       setupMethod = "r2_load_dev";
       skillsLoaded = await loadSkillsFromR2ToSandbox(sandbox, c.env.USER_DATA, userId);
     }
@@ -518,6 +764,12 @@ app.all("/socket.io/*", async (c) => {
     ANTHROPIC_API_KEY: c.env.ANTHROPIC_API_KEY || c.env.CLAUDE_CODE_OAUTH_TOKEN || "",
     CLAUDE_MODEL: c.env.MODEL || "claude-sonnet-4-5-20250929",
   });
+
+  // NOTE: We do NOT mount R2 at /root/.claude/ because:
+  // 1. The SDK actively reads/writes transcript files during conversations
+  // 2. Mounted storage has network latency on every file operation
+  // 3. Cloudflare docs recommend: "Copy frequently accessed files locally"
+  // Instead, we sync transcripts to/from R2 at session start/end (see syncTranscriptFromR2/syncTranscriptToR2)
 
   // Check if this is a WebSocket upgrade request
   const upgradeHeader = c.req.header("Upgrade");
