@@ -5,3 +5,6 @@ node_modules/
 dist/
 .claude/
 .DS_Store
+# Local/generated files
+  container/agent-sdk.js
+  frontend/dev.vars
