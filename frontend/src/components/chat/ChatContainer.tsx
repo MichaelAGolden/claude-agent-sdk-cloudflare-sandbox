@@ -32,7 +32,7 @@ export function ChatContainer() {
 
       {/* Messages area */}
       <ChatMessages
-        messages={displayMessages.map(msg => ({
+        messages={displayMessages.map((msg): { role: "user" | "assistant"; content: any; uuid?: string } => ({
           role: msg.role as "user" | "assistant",
           content: msg.content,
           uuid: msg.uuid
