@@ -176,8 +176,9 @@ export function LandingPage() {
                 <LayersIcon className="h-16 w-16 mx-auto mb-4 opacity-50" />
                 <p className="font-medium">Architecture Diagram</p>
                 <p className="text-sm mt-2 max-w-md">
-                  Request flow from React frontend through Workers, to Sandbox containers
-                  running the Claude Agent SDK, with D1 and R2 for persistence.
+                  Full-stack architecture on Cloudflare's edge. Frontend Worker serves static
+                  assets and proxies API calls. Backend Worker handles Socket.IO, D1/R2 storage,
+                  and spawns Sandbox containers running the Claude Agent SDK.
                 </p>
                 {/* Mermaid diagram description for later */}
                 <details className="mt-4 text-left max-w-2xl mx-auto">
@@ -187,23 +188,7 @@ export function LandingPage() {
                   <pre className="mt-2 p-3 bg-muted rounded text-xs overflow-x-auto">
 {`flowchart TB
     subgraph Client
-        A[React Frontend]
-    end
-
-    subgraph Cloudflare Edge
-        B[Frontend Worker]
-        C[Backend Worker<br/>Hono + Socket.IO]
-        D[Durable Objects<br/>Session Management]
-    end
-
-    subgraph Cloudflare Sandbox
-        E[Container<br/>Express + Socket.IO]
-        F[Claude Agent SDK]
-    end
-
-    subgraph Storage
-        G[(D1 Database<br/>Threads & Messages)]
-        H[(R2 Bucket<br/>Transcripts & Skills)]
+        A[React Frontend<br/>Socket.IO Client]
     end
 
     subgraph External
@@ -211,15 +196,31 @@ export function LandingPage() {
         J[Anthropic API]
     end
 
+    subgraph Cloudflare["Cloudflare Edge"]
+        B[Frontend Worker<br/>Static Assets + API Proxy]
+        C[Backend Worker<br/>Hono + Socket.IO]
+    end
+
+    subgraph Sandbox["Cloudflare Sandbox"]
+        E[Container<br/>Express + Socket.IO]
+        F[Claude Agent SDK]
+    end
+
+    subgraph Storage
+        G[(D1 Database<br/>Threads, Messages, Users)]
+        H[(R2 Bucket<br/>Transcripts, Skills)]
+    end
+
+    A -->|Auth| I
     A -->|Static Assets| B
-    A -->|API + WebSocket| C
-    C --> D
-    D --> E
+    A -.->|WebSocket| C
+    B -->|Service Binding| C
+    C -->|wsConnect :3001| E
     E --> F
-    F -->|Claude Calls| J
-    C --> G
-    C --> H
-    A --> I`}
+    F -->|API Calls| J
+    C -->|Read/Write| G
+    C -->|Sync Transcripts| H
+    E -.->|Mount Skills| H`}
                   </pre>
                 </details>
               </div>
@@ -233,8 +234,9 @@ export function LandingPage() {
                 <MessageSquareIcon className="h-16 w-16 mx-auto mb-4 opacity-50" />
                 <p className="font-medium">Real-Time Streaming Flow</p>
                 <p className="text-sm mt-2 max-w-md">
-                  Socket.IO connection from browser through Worker proxy to Sandbox,
-                  streaming Claude responses in real-time.
+                  Complete message lifecycle: Socket.IO connection, real-time streaming from
+                  Claude API, SDK session capture for thread resumption, and post-streaming
+                  persistence to D1 and R2.
                 </p>
                 <details className="mt-4 text-left max-w-2xl mx-auto">
                   <summary className="cursor-pointer text-xs text-muted-foreground/60 hover:text-muted-foreground">
@@ -243,25 +245,41 @@ export function LandingPage() {
                   <pre className="mt-2 p-3 bg-muted rounded text-xs overflow-x-auto">
 {`sequenceDiagram
     participant Browser
-    participant Frontend Worker
     participant Backend Worker
     participant Sandbox
     participant Claude API
+    participant D1
+    participant R2
 
-    Browser->>Frontend Worker: Socket.IO Connect
-    Frontend Worker->>Backend Worker: Proxy WebSocket
+    Browser->>Backend Worker: Socket.IO Connect (/socket.io/)
     Backend Worker->>Sandbox: wsConnect(port 3001)
 
-    Browser->>Sandbox: emit("message", prompt)
+    Note over Browser,Sandbox: User sends message
+    Browser->>Sandbox: emit("message", {prompt, options})
+    Sandbox->>Sandbox: Queue in MessageStream
     Sandbox->>Claude API: SDK query()
 
+    Note over Claude API,Sandbox: SDK captures session_id
+    Sandbox-->>Browser: emit("message", {role:"system", session_id})
+    Browser->>D1: Update thread.session_id
+
     loop Streaming Response
-        Claude API-->>Sandbox: text chunk
-        Sandbox-->>Browser: emit("stream", chunk)
+        Claude API-->>Sandbox: text_delta chunk
+        Sandbox-->>Browser: emit("stream", {type:"text", content})
     end
 
-    Sandbox-->>Browser: emit("result", complete)
-    Sandbox->>Backend Worker: Sync transcript to R2`}
+    Claude API-->>Sandbox: message complete
+    Sandbox-->>Browser: emit("message", {role:"assistant", content})
+    Sandbox-->>Browser: emit("result", {cost_usd, duration_ms})
+
+    Note over Browser,D1: After streaming completes
+    loop Persist each message
+        Browser->>D1: POST /threads/{id}/messages
+    end
+
+    Note over Sandbox,R2: Production only
+    Sandbox->>Backend Worker: POST /sessions/{id}/sync
+    Backend Worker->>R2: Save transcript .jsonl`}
                   </pre>
                 </details>
               </div>
