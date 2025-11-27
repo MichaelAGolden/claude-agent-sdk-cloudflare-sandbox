@@ -1,0 +1,73 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a0a"/>
+      <stop offset="100%" style="stop-color:#1a1a1a"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f97316"/>
+      <stop offset="100%" style="stop-color:#ea580c"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- Subtle grid pattern -->
+  <g opacity="0.03">
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" stroke-width="1"/>
+    </pattern>
+    <rect width="1200" height="630" fill="url(#grid)"/>
+  </g>
+
+  <!-- Orange glow accent -->
+  <ellipse cx="900" cy="200" rx="300" ry="200" fill="#f97316" opacity="0.08"/>
+
+  <!-- Cloud icon -->
+  <g transform="translate(100, 200)">
+    <path d="M 140 80
+             C 140 35.8 104.2 0 60 0
+             C 26.9 0 0 26.9 0 60
+             C 0 93.1 26.9 120 60 120
+             L 140 120
+             C 162.1 120 180 102.1 180 80
+             C 180 57.9 162.1 40 140 40
+             C 140 40 140 80 140 80 Z"
+          fill="url(#orange)"
+          transform="scale(1.5)"/>
+  </g>
+
+  <!-- Title -->
+  <text x="100" y="420" font-family="system-ui, -apple-system, sans-serif" font-size="72" font-weight="700" fill="white">
+    ezagentsdk
+  </text>
+
+  <!-- Subtitle -->
+  <text x="100" y="490" font-family="system-ui, -apple-system, sans-serif" font-size="32" fill="#a1a1aa">
+    Deploy the Claude Agent SDK on
+  </text>
+  <text x="100" y="535" font-family="system-ui, -apple-system, sans-serif" font-size="32" fill="#a1a1aa">
+    <tspan fill="#f97316" font-weight="600">Cloudflare</tspan> in Minutes
+  </text>
+
+  <!-- Tech badges -->
+  <g transform="translate(700, 380)">
+    <rect x="0" y="0" width="120" height="36" rx="8" fill="#27272a"/>
+    <text x="60" y="24" font-family="system-ui, sans-serif" font-size="14" fill="#a1a1aa" text-anchor="middle">Workers</text>
+
+    <rect x="130" y="0" width="80" height="36" rx="8" fill="#27272a"/>
+    <text x="170" y="24" font-family="system-ui, sans-serif" font-size="14" fill="#a1a1aa" text-anchor="middle">D1</text>
+
+    <rect x="220" y="0" width="80" height="36" rx="8" fill="#27272a"/>
+    <text x="260" y="24" font-family="system-ui, sans-serif" font-size="14" fill="#a1a1aa" text-anchor="middle">R2</text>
+
+    <rect x="310" y="0" width="120" height="36" rx="8" fill="#27272a"/>
+    <text x="370" y="24" font-family="system-ui, sans-serif" font-size="14" fill="#a1a1aa" text-anchor="middle">Sandbox</text>
+  </g>
+
+  <!-- URL -->
+  <text x="700" y="450" font-family="monospace" font-size="20" fill="#525252">
+    ezagentsdk.com
+  </text>
+</svg>
