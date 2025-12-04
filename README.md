@@ -59,7 +59,7 @@ For detailed setup instructions, see **[docs/DEVELOPMENT.md](./docs/DEVELOPMENT.
 
 ```
 ┌─────────────────┐
-│ Frontend (5173) │  React + Socket.IO client
+│ Frontend (5174) │  React + Socket.IO client
 └────────┬────────┘
          │ Vite Proxy
          ▼
@@ -79,7 +79,7 @@ For detailed setup instructions, see **[docs/DEVELOPMENT.md](./docs/DEVELOPMENT.
 ```
 
 **Request flow:**
-1. User interacts with React frontend (port 5173)
+1. User interacts with React frontend (port 5174)
 2. Frontend connects via WebSocket to Worker (port 8787)
 3. Worker uses `sandbox.wsConnect()` to proxy to container (port 3001)
 4. Container runs Claude Agent SDK with Socket.IO
