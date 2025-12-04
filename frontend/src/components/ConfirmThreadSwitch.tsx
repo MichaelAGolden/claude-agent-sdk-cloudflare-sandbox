@@ -23,7 +23,7 @@ export function ConfirmThreadSwitch({
 }: ConfirmThreadSwitchProps) {
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent showCloseButton={false} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Switch Conversation?</DialogTitle>
           <DialogDescription>

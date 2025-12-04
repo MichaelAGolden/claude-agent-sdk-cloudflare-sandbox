@@ -9,8 +9,108 @@
  */
 
 import { Socket } from "socket.io";
-import type { HookContext, HookResponse, Logger } from './types';
-import { log as defaultLog } from './logger';
+import type { HookContext, HookResponse, Logger } from './types.js';
+import { log as defaultLog } from './logger.js';
+
+// ============================================================================
+// IMAGE DETECTION UTILITIES
+// ============================================================================
+
+/**
+ * Supported image file extensions.
+ */
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
+
+/**
+ * Paths where the agent typically creates output files.
+ */
+const ARTIFACT_PATHS = ['/workspace', '/tmp'];
+
+/**
+ * Checks if a file path is an image based on extension.
+ */
+function isImageFile(filePath: string): boolean {
+  const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
+/**
+ * Checks if a path is within allowed artifact directories.
+ */
+function isInArtifactPath(filePath: string): boolean {
+  return ARTIFACT_PATHS.some(prefix => filePath.startsWith(prefix));
+}
+
+/**
+ * Extracts image file paths from PostToolUse hook data.
+ *
+ * Only extracts paths for images that were actually CREATED, not just mentioned.
+ * For Bash commands, we look for specific patterns that indicate file creation
+ * rather than just any path that appears in output.
+ */
+function extractImagePaths(hookData: unknown): string[] {
+  const data = hookData as Record<string, unknown>;
+  const imagePaths: string[] = [];
+
+  if (!data) return imagePaths;
+
+  const toolName = data.tool_name as string;
+  const toolInput = data.tool_input as Record<string, unknown>;
+  const toolResult = data.tool_result as string;
+
+  // Check Write tool - this is a definite file creation
+  if (toolName === 'Write' && toolInput?.file_path) {
+    const filePath = toolInput.file_path as string;
+    if (isImageFile(filePath) && isInArtifactPath(filePath)) {
+      imagePaths.push(filePath);
+    }
+  }
+
+  // Check Bash tool - only look for specific creation patterns
+  // We need to be careful here to avoid false positives from paths that
+  // are just mentioned in output (e.g., error messages, ls output)
+  if (toolName === 'Bash' && toolResult) {
+    const command = (toolInput?.command as string) || '';
+
+    // Only check for image creation if the command looks like it creates files
+    // Common patterns: python scripts that save images, imagemagick convert, etc.
+    const likelyCreatesImages =
+      command.includes('savefig') ||
+      command.includes('imsave') ||
+      command.includes('save(') ||
+      command.includes('convert ') ||
+      command.includes('matplotlib') ||
+      command.includes('pillow') ||
+      command.includes('PIL') ||
+      command.includes('.png') ||
+      command.includes('.jpg') ||
+      command.includes('> /') ||  // Redirect to file
+      command.includes('tee ');
+
+    if (likelyCreatesImages) {
+      // Look for paths in output that indicate successful file creation
+      // Patterns like "Saved to /workspace/image.png" or just the path on its own line
+      const pathMatches = toolResult.match(/\/(?:workspace|tmp)\/[^\s'"<>|]+\.(?:png|jpg|jpeg|gif|webp|svg)/gi);
+      if (pathMatches) {
+        for (const match of pathMatches) {
+          // Additional validation: make sure it's not in an error context
+          const lowerResult = toolResult.toLowerCase();
+          const isError = lowerResult.includes('error') ||
+                          lowerResult.includes('not found') ||
+                          lowerResult.includes('no such file') ||
+                          lowerResult.includes('failed');
+
+          // Only add if the result doesn't look like an error
+          if (!isError && isInArtifactPath(match)) {
+            imagePaths.push(match);
+          }
+        }
+      }
+    }
+  }
+
+  return [...new Set(imagePaths)]; // Deduplicate
+}
 
 // ============================================================================
 // CONFIGURATION
@@ -125,26 +225,33 @@ export class HookHandler {
     return async (input: unknown): Promise<HookResponse> => {
       const socket = this.context.getSocket();
       const inputObj = input as Record<string, unknown> | null;
+      const toolName = inputObj?.tool_name || 'unknown';
+
+      console.log(`[HOOK ENTRY] ${eventName} for ${toolName}, socket=${socket?.id || 'null'}, connected=${socket?.connected}`);
 
       // Capture SDK session ID from hook event data
       this.captureSessionId(inputObj, eventName, socket);
 
       // Check if session is aborted
       if (this.context.abortSignal.aborted) {
+        console.log(`[HOOK ABORT] ${eventName} - session aborted`);
         return {};
       }
 
       // Handle disconnected socket
       if (!socket || !socket.connected) {
+        console.warn(`[HOOK SKIP] ${eventName} - socket disconnected or null`);
         this.log.warn(`Skipping hook ${eventName} (socket disconnected)`, this.context.sessionId);
         return {};
       }
 
       // Use strategy based on hook type
       if (AUTO_CONTINUE_HOOKS.has(eventName)) {
+        console.log(`[HOOK AUTO] ${eventName} - using auto-continue strategy`);
         return this.handleAutoContinueHook(eventName, input, socket);
       }
 
+      console.log(`[HOOK REQUEST] ${eventName} - using request-response strategy`);
       return this.handleRequestResponseHook(eventName, input, socket, timeoutMs);
     };
   }
@@ -215,6 +322,7 @@ export class HookHandler {
 
   /**
    * Handles hooks that auto-continue without waiting for client response.
+   * For PostToolUse, also checks for image artifacts.
    */
   private handleAutoContinueHook(
     eventName: string,
@@ -229,7 +337,40 @@ export class HookHandler {
 
     socket.emit("hook_notification", { event: eventName, data: input });
 
+    // Check for image artifacts in PostToolUse events
+    if (eventName === 'PostToolUse') {
+      this.detectAndEmitImagePaths(input, socket);
+    }
+
     return { action: 'continue' };
+  }
+
+  /**
+   * Detects image artifacts from tool execution and emits paths.
+   *
+   * The container only detects the paths - the Cloudflare Worker handles
+   * reading from sandbox, uploading to R2, and serving the images.
+   */
+  private detectAndEmitImagePaths(input: unknown, socket: Socket): void {
+    try {
+      const imagePaths = extractImagePaths(input);
+
+      if (imagePaths.length === 0) {
+        return;
+      }
+
+      console.log(`[HookHandler] Detected ${imagePaths.length} image(s):`, imagePaths);
+
+      // Emit each image path - the worker will handle upload to R2
+      for (const filePath of imagePaths) {
+        socket.emit("image_created", {
+          sandboxPath: filePath,
+          sessionId: this.context.sessionId,
+        });
+      }
+    } catch (error) {
+      console.error('[HookHandler] Error detecting image paths:', error);
+    }
   }
 
   /**
@@ -241,16 +382,36 @@ export class HookHandler {
     socket: Socket,
     timeoutMs: number
   ): Promise<HookResponse> {
+    const inputObj = input as Record<string, unknown> | null;
+    const toolName = inputObj?.tool_name || 'unknown';
+    const hookId = `${eventName}-${Date.now()}`;
+
+    console.log(`[HOOK ${hookId}] START: ${eventName} for tool=${toolName}`);
+    console.log(`[HOOK ${hookId}] Socket state: connected=${socket.connected}, id=${socket.id}`);
+
     this.log.debug(
       `Hook triggered: ${eventName}`,
       { inputKeys: Object.keys((input as object) || {}) },
       socket.id
     );
 
+    const startTime = Date.now();
+
     try {
       const response = await new Promise<HookResponse>((resolve) => {
+        // Progress logging - log every 5 seconds while waiting
+        let progressCount = 0;
+        const progressInterval = setInterval(() => {
+          progressCount++;
+          const elapsed = Date.now() - startTime;
+          const socketNow = this.context.getSocket();
+          console.warn(`[HOOK ${hookId}] WAITING ${progressCount * 5}s (${elapsed}ms elapsed), socket=${socketNow?.id || 'null'}, connected=${socketNow?.connected}`);
+        }, 5000);
+
         // Timeout handler
         const timeout = setTimeout(() => {
+          const elapsed = Date.now() - startTime;
+          console.error(`[HOOK ${hookId}] TIMEOUT after ${elapsed}ms (limit=${timeoutMs}ms)`);
           this.log.warn(`Hook ${eventName} timed out after ${timeoutMs}ms`, this.context.sessionId);
           cleanup();
           resolve({});
@@ -258,6 +419,8 @@ export class HookHandler {
 
         // Disconnect handler
         const onDisconnect = () => {
+          const elapsed = Date.now() - startTime;
+          console.error(`[HOOK ${hookId}] DISCONNECT after ${elapsed}ms`);
           this.log.warn(`Client disconnected while waiting for hook ${eventName}`, this.context.sessionId);
           cleanup();
           resolve({});
@@ -266,11 +429,13 @@ export class HookHandler {
 
         // Cleanup function
         const cleanup = () => {
+          clearInterval(progressInterval);
           clearTimeout(timeout);
           socket.off('disconnect', onDisconnect);
         };
 
         // Emit hook request with callback
+        console.log(`[HOOK ${hookId}] EMITTING hook_request to client...`);
         this.log.outgoing(
           socket.id,
           'hook_request',
@@ -281,15 +446,23 @@ export class HookHandler {
           "hook_request",
           { event: eventName, data: input },
           (clientResponse: HookResponse) => {
+            const elapsed = Date.now() - startTime;
+            console.log(`[HOOK ${hookId}] CALLBACK received after ${elapsed}ms:`, JSON.stringify(clientResponse));
             cleanup();
             this.log.incoming(socket.id, `hook_response[${eventName}]`, clientResponse);
             resolve(clientResponse || {});
           }
         );
+
+        console.log(`[HOOK ${hookId}] hook_request emitted, waiting for callback...`);
       });
 
+      const totalTime = Date.now() - startTime;
+      console.log(`[HOOK ${hookId}] COMPLETE in ${totalTime}ms, response:`, JSON.stringify(response));
       return response;
     } catch (error) {
+      const elapsed = Date.now() - startTime;
+      console.error(`[HOOK ${hookId}] ERROR after ${elapsed}ms:`, error);
       this.log.error(`Error in hook ${eventName}`, error, this.context.sessionId);
       return {};
     }

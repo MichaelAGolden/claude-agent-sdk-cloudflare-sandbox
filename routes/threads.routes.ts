@@ -5,6 +5,9 @@
  * a distinct conversation with its own message history. Threads are stored in
  * D1 (SQLite) for structured querying and fast retrieval.
  *
+ * All routes require Clerk JWT authentication. The userId is extracted from
+ * the verified token, not from query parameters or request bodies.
+ *
  * @module routes/threads
  */
 
@@ -12,11 +15,15 @@ import { Hono } from "hono";
 import type { Bindings, Thread, Message } from "../lib/types";
 import { generateUUID, getTranscriptR2Key } from "../lib/utils";
 import { generateThreadTitle } from "../services/title-generator.service";
+import { requireAuth, getAuthUserId } from "./middleware";
 
-const threadsRoutes = new Hono<{ Bindings: Bindings }>();
+const threadsRoutes = new Hono<{ Bindings: Bindings; Variables: { authenticatedUserId: string } }>();
+
+// Apply auth middleware to all routes
+threadsRoutes.use("/*", requireAuth);
 
 /**
- * Lists all conversation threads for a user.
+ * Lists all conversation threads for the authenticated user.
  *
  * Returns threads in reverse chronological order (most recently updated first).
  * Soft-deleted threads are excluded from results.
@@ -25,13 +32,16 @@ const threadsRoutes = new Hono<{ Bindings: Bindings }>();
  */
 threadsRoutes.get("/", async (c) => {
   try {
-    const userId = c.req.query("userId");
-    if (!userId) {
-      return c.json({ error: "userId query parameter is required" }, 400);
+    // Get userId from verified JWT token (not from query params)
+    const userId = getAuthUserId(c);
+
+    if (!c.env.DB) {
+        console.error("[API Threads] DB binding missing. Check wrangler.toml or context loss.");
+        return c.json({ error: "Database configuration error" }, 500);
     }
 
     const result = await c.env.DB.prepare(
-      `SELECT id, user_id, session_id, title, summary, created_at, updated_at
+      `SELECT id, user_id, project_id, session_id, title, summary, model, created_at, updated_at
        FROM threads
        WHERE user_id = ? AND deleted_at IS NULL
        ORDER BY updated_at DESC`
@@ -48,20 +58,19 @@ threadsRoutes.get("/", async (c) => {
 });
 
 /**
- * Creates a new conversation thread.
+ * Creates a new conversation thread for the authenticated user.
  *
  * Creates a thread with the specified title (or default "New conversation").
+ * If projectId is provided, the thread is associated with that project.
  * Automatically creates the user record if it doesn't exist (upsert).
  *
  * @route POST /
  */
 threadsRoutes.post("/", async (c) => {
   try {
-    const body = await c.req.json<{ userId: string; title?: string }>();
-
-    if (!body.userId) {
-      return c.json({ error: "userId is required" }, 400);
-    }
+    // Get userId from verified JWT token
+    const userId = getAuthUserId(c);
+    const body = await c.req.json<{ title?: string; projectId?: string }>().catch(() => ({ title: undefined, projectId: undefined }));
 
     const threadId = generateUUID();
     const title = body.title || "New conversation";
@@ -70,17 +79,29 @@ threadsRoutes.post("/", async (c) => {
     // Ensure user exists (upsert)
     await c.env.DB.prepare(
       `INSERT OR IGNORE INTO users (id) VALUES (?)`
-    ).bind(body.userId).run();
+    ).bind(userId).run();
 
-    // Create thread
+    // Verify project exists if provided
+    if (body.projectId) {
+      const project = await c.env.DB.prepare(
+        `SELECT id FROM projects WHERE id = ? AND user_id = ? AND deleted_at IS NULL`
+      ).bind(body.projectId, userId).first();
+
+      if (!project) {
+        return c.json({ error: "Project not found" }, 404);
+      }
+    }
+
+    // Create thread with optional project_id
     await c.env.DB.prepare(
-      `INSERT INTO threads (id, user_id, title, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)`
-    ).bind(threadId, body.userId, title, now, now).run();
+      `INSERT INTO threads (id, user_id, project_id, title, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(threadId, userId, body.projectId || null, title, now, now).run();
 
     return c.json({
       id: threadId,
-      user_id: body.userId,
+      user_id: userId,
+      project_id: body.projectId || null,
       title,
       session_id: null,
       summary: null,
@@ -97,19 +118,21 @@ threadsRoutes.post("/", async (c) => {
  * Retrieves a thread with all its messages.
  *
  * Returns the thread metadata along with its complete message history
- * in chronological order (oldest first).
+ * in chronological order (oldest first). Only returns threads owned by
+ * the authenticated user.
  *
  * @route GET /:id
  */
 threadsRoutes.get("/:id", async (c) => {
   try {
+    const userId = getAuthUserId(c);
     const threadId = c.req.param("id");
 
-    // Get thread
+    // Get thread - MUST belong to authenticated user
     const thread = await c.env.DB.prepare(
-      `SELECT id, user_id, session_id, title, summary, created_at, updated_at
-       FROM threads WHERE id = ?`
-    ).bind(threadId).first<Thread>();
+      `SELECT id, user_id, project_id, session_id, title, summary, model, created_at, updated_at
+       FROM threads WHERE id = ? AND user_id = ?`
+    ).bind(threadId, userId).first<Thread>();
 
     if (!thread) {
       return c.json({ error: "Thread not found" }, 404);
@@ -137,14 +160,25 @@ threadsRoutes.get("/:id", async (c) => {
  * Updates thread metadata.
  *
  * Allows partial updates to thread properties. Only provided fields
- * are updated; omitted fields remain unchanged.
+ * are updated; omitted fields remain unchanged. Only the thread owner
+ * can update the thread.
  *
  * @route PATCH /:id
  */
 threadsRoutes.patch("/:id", async (c) => {
   try {
+    const userId = getAuthUserId(c);
     const threadId = c.req.param("id");
-    const body = await c.req.json<{ title?: string; sessionId?: string; summary?: string }>();
+    const body = await c.req.json<{ title?: string; sessionId?: string; summary?: string; model?: string }>();
+
+    // Verify ownership first
+    const existing = await c.env.DB.prepare(
+      `SELECT id FROM threads WHERE id = ? AND user_id = ?`
+    ).bind(threadId, userId).first();
+
+    if (!existing) {
+      return c.json({ error: "Thread not found" }, 404);
+    }
 
     // Build dynamic update query
     const updates: string[] = [];
@@ -162,6 +196,10 @@ threadsRoutes.patch("/:id", async (c) => {
       updates.push("summary = ?");
       values.push(body.summary);
     }
+    if (body.model !== undefined) {
+      updates.push("model = ?");
+      values.push(body.model);
+    }
 
     if (updates.length === 0) {
       return c.json({ error: "No fields to update" }, 400);
@@ -170,16 +208,17 @@ threadsRoutes.patch("/:id", async (c) => {
     updates.push("updated_at = ?");
     values.push(new Date().toISOString());
     values.push(threadId);
+    values.push(userId); // Add userId to WHERE clause
 
     await c.env.DB.prepare(
-      `UPDATE threads SET ${updates.join(", ")} WHERE id = ?`
+      `UPDATE threads SET ${updates.join(", ")} WHERE id = ? AND user_id = ?`
     ).bind(...values).run();
 
     // Return updated thread
     const thread = await c.env.DB.prepare(
-      `SELECT id, user_id, session_id, title, summary, created_at, updated_at
-       FROM threads WHERE id = ?`
-    ).bind(threadId).first<Thread>();
+      `SELECT id, user_id, project_id, session_id, title, summary, model, created_at, updated_at
+       FROM threads WHERE id = ? AND user_id = ?`
+    ).bind(threadId, userId).first<Thread>();
 
     return c.json(thread);
   } catch (error: any) {
@@ -193,17 +232,19 @@ threadsRoutes.patch("/:id", async (c) => {
  *
  * Performs a soft delete by setting the `deleted_at` timestamp. The thread
  * data is preserved in D1 for usage tracking and audit purposes.
+ * Only the thread owner can delete the thread.
  *
  * @route DELETE /:id
  */
 threadsRoutes.delete("/:id", async (c) => {
   try {
+    const userId = getAuthUserId(c);
     const threadId = c.req.param("id");
 
-    // Get thread info before soft-deleting (need user_id and session_id for R2 cleanup)
+    // Get thread info - MUST belong to authenticated user
     const thread = await c.env.DB.prepare(
-      `SELECT id, user_id, session_id FROM threads WHERE id = ? AND deleted_at IS NULL`
-    ).bind(threadId).first<{ id: string; user_id: string; session_id: string | null }>();
+      `SELECT id, user_id, session_id FROM threads WHERE id = ? AND user_id = ? AND deleted_at IS NULL`
+    ).bind(threadId, userId).first<{ id: string; user_id: string; session_id: string | null }>();
 
     if (!thread) {
       return c.json({ error: "Thread not found" }, 404);
@@ -226,8 +267,8 @@ threadsRoutes.delete("/:id", async (c) => {
     // Soft delete: set deleted_at timestamp instead of hard delete
     const now = new Date().toISOString();
     await c.env.DB.prepare(
-      `UPDATE threads SET deleted_at = ? WHERE id = ?`
-    ).bind(now, threadId).run();
+      `UPDATE threads SET deleted_at = ? WHERE id = ? AND user_id = ?`
+    ).bind(now, threadId, userId).run();
 
     return c.json({
       status: "deleted",
@@ -246,13 +287,24 @@ threadsRoutes.delete("/:id", async (c) => {
  * Adds a message to a thread.
  *
  * Appends a new message to the thread's conversation history.
+ * Only the thread owner can add messages.
  *
  * @route POST /:id/messages
  */
 threadsRoutes.post("/:id/messages", async (c) => {
   try {
+    const userId = getAuthUserId(c);
     const threadId = c.req.param("id");
     const body = await c.req.json<{ role: string; content: string; hookEvent?: any }>();
+
+    // Verify thread ownership
+    const thread = await c.env.DB.prepare(
+      `SELECT id FROM threads WHERE id = ? AND user_id = ?`
+    ).bind(threadId, userId).first();
+
+    if (!thread) {
+      return c.json({ error: "Thread not found" }, 404);
+    }
 
     if (!body.role || body.content === undefined) {
       return c.json({ error: "role and content are required" }, 400);
@@ -269,10 +321,10 @@ threadsRoutes.post("/:id/messages", async (c) => {
        VALUES (?, ?, ?, ?, ?, ?)`
     ).bind(messageId, threadId, body.role, contentStr, hookEventStr, now).run();
 
-    // Update thread's updated_at
+    // Update thread's updated_at (with ownership check)
     await c.env.DB.prepare(
-      `UPDATE threads SET updated_at = ? WHERE id = ?`
-    ).bind(now, threadId).run();
+      `UPDATE threads SET updated_at = ? WHERE id = ? AND user_id = ?`
+    ).bind(now, threadId, userId).run();
 
     return c.json({
       id: messageId,
@@ -292,13 +344,23 @@ threadsRoutes.post("/:id/messages", async (c) => {
  * Generates a title for a thread using Claude Haiku.
  *
  * Analyzes the first user message in the thread and generates a concise
- * 3-6 word title.
+ * 3-6 word title. Only the thread owner can generate titles.
  *
  * @route POST /:id/title
  */
 threadsRoutes.post("/:id/title", async (c) => {
   try {
+    const userId = getAuthUserId(c);
     const threadId = c.req.param("id");
+
+    // Verify thread ownership
+    const thread = await c.env.DB.prepare(
+      `SELECT id FROM threads WHERE id = ? AND user_id = ?`
+    ).bind(threadId, userId).first();
+
+    if (!thread) {
+      return c.json({ error: "Thread not found" }, 404);
+    }
 
     // Get first user message
     const firstMessage = await c.env.DB.prepare(
@@ -320,10 +382,10 @@ threadsRoutes.post("/:id/title", async (c) => {
 
     const title = await generateThreadTitle(apiKey, firstMessage.content);
 
-    // Update thread title
+    // Update thread title (with ownership check)
     await c.env.DB.prepare(
-      `UPDATE threads SET title = ?, updated_at = ? WHERE id = ?`
-    ).bind(title, new Date().toISOString(), threadId).run();
+      `UPDATE threads SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?`
+    ).bind(title, new Date().toISOString(), threadId, userId).run();
 
     return c.json({ threadId, title });
   } catch (error: any) {

@@ -23,12 +23,14 @@ import { loadSkillsFromR2ToSandbox } from "./skills.service";
 /**
  * Checks if the Claude Agent SDK process is running and healthy.
  *
- * Performs a health check by sending a GET request to the agent's
- * internal health endpoint. The agent exposes this endpoint on
- * port 3001 within the sandbox.
+ * Uses process listing and port checking instead of HTTP health checks,
+ * since sandbox.fetch() is unreliable in the Cloudflare Sandbox environment.
+ *
+ * NOTE: sandbox.exec() here is the Cloudflare Sandbox SDK API that runs
+ * commands inside the sandboxed container - NOT Node.js child_process.exec().
  *
  * @param sandbox - The sandbox instance to check
- * @returns True if the agent responds with 200 OK
+ * @returns True if the agent process is running
  *
  * @example
  * if (await isAgentRunning(sandbox)) {
@@ -39,9 +41,25 @@ import { loadSkillsFromR2ToSandbox } from "./skills.service";
  */
 export const isAgentRunning = async (sandbox: Sandbox): Promise<boolean> => {
   try {
-    const healthRequest = new Request("http://localhost:3001/health", { method: "GET" });
-    const response = await sandbox.fetch(healthRequest);
-    return response.ok;
+    // Check if our agent process exists in the process list
+    const processes = await sandbox.listProcesses();
+    const agentProcess = processes.find(p => p.id === AGENT_PROCESS_ID);
+
+    if (!agentProcess) {
+      return false;
+    }
+
+    // Process exists - check if port 3001 is listening using ss command
+    // This is more reliable than sandbox.fetch() which doesn't work properly
+    // sandbox.exec is Cloudflare Sandbox SDK API (safe, runs in container)
+    try {
+      const result = await sandbox.exec("ss -tlnp | grep :3001 || true", { timeout: 2000 });
+      const isListening = result.stdout?.includes(":3001");
+      return isListening;
+    } catch {
+      // If ss command fails, just trust the process list
+      return true;
+    }
   } catch {
     return false;
   }
@@ -91,6 +109,40 @@ export const startAgentProcess = async (
       return true;
     }
 
+    // Kill any existing agent process to prevent EADDRINUSE errors
+    // This handles cases where a previous process crashed but still holds the port
+    // We use multiple approaches since process state may not persist across wrangler restarts
+
+    // First, list all running processes to understand what we're dealing with
+    try {
+      const processes = await sandbox.listProcesses();
+      console.log(`[Agent] Current processes in sandbox:`, processes.map(p => `${p.id}(pid:${p.pid})`).join(', ') || '(none)');
+    } catch (e: any) {
+      console.log(`[Agent] Could not list processes:`, e?.message);
+    }
+
+    // Approach 1: Kill ALL processes to ensure clean state
+    try {
+      await sandbox.killAllProcesses();
+      console.log(`[Agent] Killed all processes in sandbox`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (e: any) {
+      console.log(`[Agent] killAllProcesses result:`, e?.message || e);
+    }
+
+    // Approach 2: Use sandbox.exec() to kill any process on port 3001
+    // This catches orphan processes that weren't tracked by the sandbox API
+    try {
+      const killResult = await sandbox.exec("fuser -k 3001/tcp 2>/dev/null || true");
+      console.log(`[Agent] fuser kill on port 3001:`, killResult.stdout || killResult.stderr || "executed");
+    } catch (e: any) {
+      console.log(`[Agent] fuser attempt:`, e?.message || "no processes on port");
+    }
+
+    // Give OS time to release the port after any kill attempts
+    // Increased from 1000ms to 2000ms to prevent EADDRINUSE race conditions
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
     // Use startProcess() for background processes (not exec which is synchronous)
     // startProcess() keeps the process running after the call returns
     // IMPORTANT: cwd must be /workspace for the Claude Agent SDK to discover skills
@@ -107,15 +159,32 @@ export const startAgentProcess = async (
 
     console.log(`[Agent] Started agent process:`, process.id);
 
-    // Wait for agent to be ready (poll health endpoint)
+    // Wait for agent to be ready by checking process logs for startup message
+    // This is more reliable than sandbox.fetch() health checks
     const startTime = Date.now();
+    const STARTUP_SUCCESS_MARKER = "Server started on port 3001";
 
     while (Date.now() - startTime < AGENT_STARTUP_TIMEOUT_MS) {
-      if (await isAgentRunning(sandbox)) {
-        console.log(`[Agent] Agent is ready for session ${sessionId} (took ${Date.now() - startTime}ms)`);
-        setAgentState(sessionId, { started: true, startedAt: Date.now(), processId: process.id });
-        return true;
+      try {
+        const logs = await sandbox.getProcessLogs(AGENT_PROCESS_ID);
+        const logText = typeof logs === 'string' ? logs : JSON.stringify(logs);
+
+        // Check for successful startup message in logs
+        if (logText.includes(STARTUP_SUCCESS_MARKER)) {
+          console.log(`[Agent] Agent is ready for session ${sessionId} (took ${Date.now() - startTime}ms)`);
+          setAgentState(sessionId, { started: true, starting: false, startedAt: Date.now(), processId: process.id });
+          return true;
+        }
+
+        // Also check for EADDRINUSE error to fail fast
+        if (logText.includes("EADDRINUSE")) {
+          console.error(`[Agent] Port 3001 already in use, agent cannot start`);
+          break;
+        }
+      } catch {
+        // Logs not available yet, continue polling
       }
+
       await new Promise(resolve => setTimeout(resolve, AGENT_HEALTH_POLL_INTERVAL_MS));
     }
 
@@ -204,7 +273,7 @@ export const stopAgentProcess = async (sandbox: Sandbox, sessionId: string): Pro
  * ## Restart Sequence
  * 1. Stop the currently running agent (if any)
  * 2. Ensure the `.claude` directory exists
- * 3. Load all skills from R2 to the sandbox filesystem
+ * 3. Load all skills from R2 to the sandbox filesystem (user + project skills)
  * 4. Start a fresh agent process
  * 5. Return success status and loaded skill paths
  *
@@ -216,11 +285,12 @@ export const stopAgentProcess = async (sandbox: Sandbox, sessionId: string): Pro
  * @param sandbox - The sandbox instance to restart
  * @param bucket - R2 bucket containing user skills
  * @param sessionId - Session identifier (typically userId)
+ * @param projectId - Optional project ID to load project-scoped skills
  * @returns Object containing success status and array of loaded skill paths
  *
  * @example
  * // After uploading a new skill
- * const result = await restartAgentWithSkills(sandbox, bucket, userId);
+ * const result = await restartAgentWithSkills(sandbox, bucket, userId, projectId);
  * if (result.success) {
  *   console.log(`Loaded skills: ${result.skillsLoaded.join(", ")}`);
  * }
@@ -228,16 +298,17 @@ export const stopAgentProcess = async (sandbox: Sandbox, sessionId: string): Pro
 export const restartAgentWithSkills = async (
   sandbox: Sandbox,
   bucket: R2Bucket,
-  sessionId: string
+  sessionId: string,
+  projectId?: string
 ): Promise<{ success: boolean; skillsLoaded: string[] }> => {
   try {
     // 1. Stop the agent
     await stopAgentProcess(sandbox, sessionId);
 
-    // 2. Load skills from R2
-    console.log(`[Agent] Loading skills before restart for session ${sessionId}...`);
+    // 2. Load skills from R2 (both user-scoped and project-scoped if projectId provided)
+    console.log(`[Agent] Loading skills before restart for session ${sessionId}, project ${projectId || 'none'}...`);
     await sandbox.writeFile("/workspace/.claude/.gitkeep", "");
-    const skillsLoaded = await loadSkillsFromR2ToSandbox(sandbox, bucket, sessionId);
+    const skillsLoaded = await loadSkillsFromR2ToSandbox(sandbox, bucket, sessionId, projectId);
     console.log(`[Agent] Loaded ${skillsLoaded.length} skills`);
 
     // 3. Start the agent
@@ -265,11 +336,12 @@ export const restartAgentWithSkills = async (
  * @param sandboxNamespace - The Sandbox DO namespace
  * @param bucket - R2 bucket containing user skills
  * @param userId - User identifier (also used as session ID)
+ * @param projectId - Optional project ID to load project-scoped skills
  * @returns Object containing restart status and loaded skill paths
  *
  * @example
  * // After uploading a new skill
- * const result = await restartAgentForSkillsReload(env.Sandbox, env.USER_DATA, userId);
+ * const result = await restartAgentForSkillsReload(env.Sandbox, env.USER_DATA, userId, projectId);
  * if (result.restarted) {
  *   console.log(`Reloaded skills: ${result.skillsLoaded.join(", ")}`);
  * }
@@ -277,15 +349,16 @@ export const restartAgentWithSkills = async (
 export const restartAgentForSkillsReload = async (
   sandboxNamespace: DurableObjectNamespace<Sandbox>,
   bucket: R2Bucket,
-  userId: string
+  userId: string,
+  projectId?: string
 ): Promise<{ restarted: boolean; skillsLoaded: string[] }> => {
   try {
     const sandbox = getSandbox(sandboxNamespace, userId);
 
-    console.log(`[Skills] Restarting agent for user ${userId} to reload skills...`);
+    console.log(`[Skills] Restarting agent for user ${userId}, project ${projectId || 'none'} to reload skills...`);
 
     // Use the restart helper that properly stops/starts the agent
-    const result = await restartAgentWithSkills(sandbox, bucket, userId);
+    const result = await restartAgentWithSkills(sandbox, bucket, userId, projectId);
 
     if (result.success) {
       console.log(`[Skills] Agent restarted successfully for ${userId}`);

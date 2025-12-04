@@ -2,12 +2,14 @@ import { useCallback, useState } from "react";
 import type { FC } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import * as m from "motion/react-m";
+import { useAuth } from "@clerk/clerk-react";
 
 import { useAgent } from "@/contexts/AgentContext";
-import { StandaloneMarkdown } from "@/components/assistant-ui/standalone-markdown";
+import { StandaloneMarkdown, DetectedImages } from "@/components/assistant-ui/standalone-markdown";
 import { StandaloneToolFallback } from "@/components/assistant-ui/standalone-tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { HookEventDisplay } from "@/components/HookEventDisplay";
+import { StreamTerminationDisplay } from "@/components/StreamTerminationDisplay";
 import type { Message, HookEvent } from "@/types/index";
 
 // Helper to extract text content from complex content structures
@@ -55,11 +57,18 @@ const UserMessageItem: FC<{ message: Message; index: number }> = ({ message }) =
 };
 
 // Assistant message component with copy functionality
-const AssistantMessageItem: FC<{ message: Message; index: number; isLast: boolean; isStreaming: boolean }> = ({
+const AssistantMessageItem: FC<{
+  message: Message;
+  index: number;
+  isLast: boolean;
+  isStreaming: boolean;
+  sessionId?: string;
+}> = ({
   message,
   index,
   isLast,
-  isStreaming
+  isStreaming,
+  sessionId,
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -96,7 +105,12 @@ const AssistantMessageItem: FC<{ message: Message; index: number; isLast: boolea
       <div className="aui-assistant-message-content mx-2 leading-7 break-words text-foreground">
         {/* Render text content with markdown */}
         {textContent && textContent.length > 0 && (
-          <StandaloneMarkdown content={textContent} />
+          <StandaloneMarkdown content={textContent} sessionId={sessionId} />
+        )}
+
+        {/* Auto-detect and render image paths mentioned in the text */}
+        {textContent && textContent.length > 0 && (
+          <DetectedImages content={textContent} sessionId={sessionId} />
         )}
 
         {/* Render tool calls */}
@@ -142,17 +156,61 @@ const HookMessageItem: FC<{ message: Message & { hookEvent: HookEvent }; index: 
   );
 };
 
+// Thinking indicator shown while agent is working
+const ThinkingIndicator: FC = () => {
+  return (
+    <m.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="mx-auto w-full max-w-[var(--thread-max-width)] py-4"
+    >
+      <div className="mx-2 flex items-center gap-3 text-muted-foreground">
+        <div className="flex items-center gap-1">
+          <m.span
+            className="h-2 w-2 rounded-full bg-primary/60"
+            animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 1.4, repeat: Infinity, delay: 0 }}
+          />
+          <m.span
+            className="h-2 w-2 rounded-full bg-primary/60"
+            animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 1.4, repeat: Infinity, delay: 0.2 }}
+          />
+          <m.span
+            className="h-2 w-2 rounded-full bg-primary/60"
+            animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 1.4, repeat: Infinity, delay: 0.4 }}
+          />
+        </div>
+        <span className="text-sm">Working...</span>
+      </div>
+    </m.div>
+  );
+};
+
 // Main ThreadMessages component that renders all messages including hooks
 export const ThreadMessages: FC = () => {
   const { state } = useAgent();
-  const { messages, isStreaming } = state;
+  const { userId } = useAuth();
+  const { messages, isStreaming, streamTermination } = state;
 
   // Debug logging
-  console.log("[ThreadMessages] Rendering", messages.length, "messages, isStreaming:", isStreaming);
+  console.log("[ThreadMessages] Rendering", messages.length, "messages, isStreaming:", isStreaming, "termination:", streamTermination?.reason);
 
   if (messages.length === 0) {
     return null;
   }
+
+  // Check if we should show the thinking indicator
+  // Show when streaming AND the last message is not an assistant message that's actively receiving text
+  // This keeps the indicator visible through hooks and tool uses until the Stop hook
+  const lastMessage = messages[messages.length - 1];
+  const isLastMessageStreamingAssistant = lastMessage?.role === "assistant" &&
+    extractTextContent(lastMessage.content).length > 0;
+
+  // Show thinking when streaming, unless we're actively showing streaming assistant text
+  const showThinking = isStreaming && !isLastMessageStreamingAssistant;
 
   return (
     <div className="aui-thread-messages">
@@ -191,6 +249,7 @@ export const ThreadMessages: FC = () => {
                 index={index}
                 isLast={isLast}
                 isStreaming={isStreaming}
+                sessionId={userId || undefined}
               />
             );
           }
@@ -206,6 +265,14 @@ export const ThreadMessages: FC = () => {
           );
         }
       })}
+
+      {/* Show thinking indicator when waiting for assistant response */}
+      {showThinking && <ThinkingIndicator />}
+
+      {/* Show termination info when agent stopped unexpectedly */}
+      {!isStreaming && streamTermination && (
+        <StreamTerminationDisplay termination={streamTermination} />
+      )}
     </div>
   );
 };

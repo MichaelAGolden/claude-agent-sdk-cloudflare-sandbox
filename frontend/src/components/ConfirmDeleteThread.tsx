@@ -26,7 +26,7 @@ export function ConfirmDeleteThread({
 }: ConfirmDeleteThreadProps) {
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && !isDeleting && onCancel()}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent showCloseButton={false} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-destructive" />

@@ -1,19 +1,16 @@
 import { useEffect, useRef } from "react";
 import { ChatMessage } from "./ChatMessage";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { Message } from "@/types";
 
-interface Message {
-  role: "user" | "assistant";
-  content: any;
-  uuid?: string;
-}
-
+/** Props for ChatMessages - accepts full Message[] but only displays user/assistant */
 interface ChatMessagesProps {
   messages: Message[];
   isStreaming: boolean;
+  sessionId: string | null;
 }
 
-export function ChatMessages({ messages, isStreaming }: ChatMessagesProps) {
+export function ChatMessages({ messages, isStreaming, sessionId }: ChatMessagesProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
@@ -50,6 +47,7 @@ export function ChatMessages({ messages, isStreaming }: ChatMessagesProps) {
               role={msg.role}
               content={msg.content}
               isStreaming={showStreamingIndicator}
+              sessionId={sessionId}
             />
           );
         })}

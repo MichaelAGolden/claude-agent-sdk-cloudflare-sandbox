@@ -31,8 +31,8 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 
 // Import library modules
-import { log, SessionManager, QueryOrchestrator, registerSocketHandlers } from "./lib";
-import { registerRoutes } from "./routes";
+import { log, SessionManager, QueryOrchestrator, registerSocketHandlers } from "./lib/index.js";
+import { registerRoutes } from "./routes/index.js";
 
 // ============================================================================
 // ENVIRONMENT SETUP

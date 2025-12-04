@@ -12,13 +12,15 @@
     "build": "npm run build:container && npm run build:frontend",
     "build:container": "cd container && npm run build",
     "build:frontend": "cd frontend && npm run build",
-    "deploy": "wrangler deploy",
-    "deploy:frontend": "cd frontend && npm run build && npx wrangler deploy",
+    "deploy": "npx wrangler@latest deploy",
+    "deploy:frontend": "cd frontend && npm run build && npx wrangler@latest deploy",
+    "deploy:all": "npm run build && npm run deploy && npm run deploy:frontend",
     "setup:r2": "chmod +x scripts/setup-r2.sh && ./scripts/setup-r2.sh",
     "install:all": "npm install && cd container && npm install && cd ../frontend && npm install"
   },
   "dependencies": {
-    "@cloudflare/sandbox": "^0.5.1",
+    "@clerk/backend": "^2.24.0",
+    "@cloudflare/sandbox": "^0.6.0",
     "hono": "^4.0.0"
   },
   "devDependencies": {

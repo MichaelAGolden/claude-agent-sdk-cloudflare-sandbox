@@ -48,7 +48,8 @@ RUN npm run build && \
 # Create directory structure for skills
 # Note: This creates the base directory at build time, but skill subdirectories
 # are created at runtime via sandbox.mkdir() before loading each skill
-RUN mkdir -p /workspace/.claude/skills
+RUN mkdir -p /workspace/.claude/skills && \
+    echo "Container build: $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /workspace/.claude/.build-info
 
 # Document the port our agent will use (when started via sandbox.startProcess())
 EXPOSE 3001

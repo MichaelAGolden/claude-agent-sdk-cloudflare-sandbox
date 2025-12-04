@@ -62,6 +62,7 @@
  */
 
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 export { Sandbox } from "@cloudflare/sandbox";
 
 import type { Bindings } from "./lib/types";
@@ -71,6 +72,16 @@ import { registerRoutes } from "./routes";
  * Hono application instance configured with Cloudflare Workers bindings.
  */
 const app = new Hono<{ Bindings: Bindings }>();
+
+// Global CORS configuration
+app.use("/*", cors({
+  origin: (origin) => origin || "*", // Allow all origins (reflection)
+  allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowHeaders: ["Content-Type", "Authorization", "Upgrade-Insecure-Requests"],
+  exposeHeaders: ["Content-Length"],
+  maxAge: 600,
+  credentials: true,
+}));
 
 // Register all route groups
 registerRoutes(app);

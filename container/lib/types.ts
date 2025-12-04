@@ -17,7 +17,7 @@ import {
   SDKUserMessage,
   type Options
 } from "@anthropic-ai/claude-agent-sdk";
-import type { MessageStream } from "./MessageStream";
+import type { MessageStream } from "./MessageStream.js";
 
 // ============================================================================
 // BRANDED TYPES
@@ -135,6 +135,33 @@ export interface UserStoredMessage extends BaseStoredMessage {
 }
 
 /**
+ * Image content block for displaying images in messages.
+ *
+ * @description
+ * Used when the agent creates an image file. The image is uploaded to R2
+ * and a URL is generated for display. This enables Claude to "see" the
+ * image via the base64 data, while users see it via the URL.
+ */
+export interface ImageContentBlock {
+  type: 'image';
+  /** Source information for the image */
+  source: {
+    /** Always 'base64' for direct image data */
+    type: 'base64';
+    /** MIME type of the image (e.g., 'image/png', 'image/jpeg') */
+    media_type: string;
+    /** Base64-encoded image data */
+    data: string;
+  };
+  /** URL to access the image from R2 storage */
+  url?: string;
+  /** Original file path in the sandbox */
+  sandboxPath?: string;
+  /** Alt text for accessibility */
+  alt?: string;
+}
+
+/**
  * Content block types that can appear in assistant messages.
  */
 export type AssistantContentBlock =
@@ -142,6 +169,7 @@ export type AssistantContentBlock =
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; tool_use_id: string; content: unknown }
   | { type: 'thinking'; thinking: string }
+  | ImageContentBlock
   | { type: string; [key: string]: unknown }; // Catch-all for SDK extensions
 
 /**
@@ -356,6 +384,41 @@ export interface ClientToServerEvents {
 }
 
 /**
+ * Image artifact payload for displaying agent-generated images.
+ */
+export interface ImageArtifactPayload {
+  type: 'image';
+  /** URL to fetch the image from R2/server */
+  url: string;
+  /** Original sandbox path where the image was created */
+  sandboxPath?: string;
+  /** MIME type of the image */
+  mimeType: string;
+}
+
+/**
+ * Represents a file system operation detected from tool execution.
+ */
+export interface FileOperation {
+  /** Type of file operation */
+  type: 'create' | 'modify' | 'delete' | 'rename' | 'mkdir';
+  /** Path affected by the operation */
+  path: string;
+  /** New path for rename/move operations */
+  newPath?: string;
+}
+
+/**
+ * Payload for file_changed events sent to the file explorer UI.
+ */
+export interface FileChangedPayload {
+  /** List of file operations detected */
+  operations: FileOperation[];
+  /** Session ID for context */
+  sessionId: string;
+}
+
+/**
  * Events sent from server to client.
  */
 export interface ServerToClientEvents {
@@ -374,6 +437,10 @@ export interface ServerToClientEvents {
   compact_boundary: (payload: unknown) => void;
   interrupt_complete: (payload: InterruptCompletePayload) => void;
   stderr: (data: string) => void;
+  /** Emitted when the agent creates an image artifact */
+  image_artifact: (payload: ImageArtifactPayload) => void;
+  /** Emitted when the agent creates, modifies, or deletes files */
+  file_changed: (payload: FileChangedPayload) => void;
 }
 
 /**

@@ -1,7 +1,9 @@
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from "@assistant-ui/react";
 import { useAgent } from "../contexts/AgentContext";
+import { useThreads } from "../contexts/ThreadContext";
 import { useRef, Component, useCallback } from "react";
 import type { ReactNode } from "react";
+import { CLAUDE_MODELS } from "../types";
 
 // Counter for fallback IDs to ensure uniqueness
 let messageIdCounter = 0;
@@ -147,6 +149,10 @@ function convertContent(content: unknown, _stableId?: string) {
 
 export const AgentRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   const { state, sendMessage, interrupt } = useAgent();
+  const { state: threadState } = useThreads();
+
+  // Get current model from thread (default to Sonnet 4.5)
+  const currentModel = threadState.currentThread?.model || CLAUDE_MODELS.SONNET_4_5;
 
   // Debug: Log every render
   console.log('[AgentRuntimeProvider] render - msgCount:', state.messages.length, 'isStreaming:', state.isStreaming);
@@ -232,9 +238,9 @@ export const AgentRuntimeProvider = ({ children }: { children: React.ReactNode }
   // Callbacks - memoized
   const onNew = useCallback(async (message: any) => {
     if (message.content.length > 0 && message.content[0].type === 'text') {
-      sendMessage(message.content[0].text);
+      sendMessage(message.content[0].text, { model: currentModel });
     }
-  }, [sendMessage]);
+  }, [sendMessage, currentModel]);
 
   const onCancel = useCallback(async () => {
     interrupt();

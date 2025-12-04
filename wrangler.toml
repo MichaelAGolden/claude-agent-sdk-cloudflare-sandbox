@@ -4,6 +4,10 @@ account_id = "c8a3a4bee1a0c137e56b7adca8d3e8fe"
 compatibility_date = "2025-09-23"
 compatibility_flags = ["nodejs_compat"]
 
+# Development server configuration
+[dev]
+port = 8787
+
 [observability]
 enabled = true
 

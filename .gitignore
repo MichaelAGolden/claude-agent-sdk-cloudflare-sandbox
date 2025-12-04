@@ -1,10 +1,21 @@
 node_modules/
 .env
+.env.production
+.env.local
+.env*.local
 .dev.vars
 .wrangler/
 dist/
 .claude/
 .DS_Store
+
 # Local/generated files
-  container/agent-sdk.js
-  frontend/dev.vars
+container/agent-sdk.js
+frontend/dev.vars
+
+# Documentation and planning (keep local only)
+docs/
+plans/
+
+# Other IDE/tool artifacts
+.gemini-clipboard/

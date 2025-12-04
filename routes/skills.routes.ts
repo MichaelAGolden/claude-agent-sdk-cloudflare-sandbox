@@ -1,44 +1,61 @@
 /**
- * @fileoverview Skills API endpoints (public, frontend-facing).
+ * @fileoverview Skills API endpoints (authenticated, frontend-facing).
  *
- * Public-facing API for managing user skills. These endpoints are designed
- * for frontend consumption and accept userId as a query parameter or in
- * the request body.
+ * API for managing user and project-scoped skills. All endpoints require Clerk JWT authentication.
+ * The userId is extracted from the verified token, not from query parameters.
  *
  * Skills are markdown files that extend Claude's capabilities with custom
  * instructions, workflows, or domain knowledge.
+ *
+ * ## Skill Scoping
+ * - User skills: Available across all projects (no projectId)
+ * - Project skills: Only available within a specific project (requires projectId)
  *
  * @module routes/skills
  */
 
 import { Hono } from "hono";
 import type { Bindings } from "../lib/types";
-import { getUserSkillKey } from "../lib/utils";
-import { listUserSkillsFromR2 } from "../services/skills.service";
+import { getUserSkillKey, getProjectSkillKey } from "../lib/utils";
+import {
+  listAllSkillsFromR2,
+  listProjectSkillsFromR2,
+  type SkillInfo,
+} from "../services/skills.service";
 import { restartAgentForSkillsReload } from "../services/sandbox.service";
+import { requireAuth, getAuthUserId } from "./middleware";
 
-const skillsRoutes = new Hono<{ Bindings: Bindings }>();
+const skillsRoutes = new Hono<{ Bindings: Bindings; Variables: { authenticatedUserId: string } }>();
+
+// Apply auth middleware to all routes
+skillsRoutes.use("/*", requireAuth);
 
 /**
- * Lists all skills for a user.
+ * Lists all skills for the authenticated user.
  *
- * Returns the names of all skills stored in R2 for the specified user.
+ * Returns both user-scoped and project-scoped skills if projectId is provided.
+ * Each skill includes scope information ('user' or 'project').
  *
  * @route GET /
+ * @query projectId - Optional project ID to include project-scoped skills
  */
 skillsRoutes.get("/", async (c) => {
   try {
-    const userId = c.req.query("userId");
-    if (!userId) {
-      return c.json({ error: "userId query parameter is required" }, 400);
+    const userId = getAuthUserId(c);
+    const projectId = c.req.query("projectId");
+
+    if (!c.env.USER_DATA) {
+      console.error("[API Skills] USER_DATA binding missing. Check wrangler.toml or context loss.");
+      return c.json({ error: "Storage configuration error" }, 500);
     }
 
-    const skillNames = await listUserSkillsFromR2(c.env.USER_DATA, userId);
+    const skills = await listAllSkillsFromR2(c.env.USER_DATA, userId, projectId);
 
     return c.json({
       userId,
-      skills: skillNames,
-      count: skillNames.length,
+      projectId: projectId || null,
+      skills,
+      count: skills.length,
     });
   } catch (error: any) {
     console.error("[API Skills List Error]", error);
@@ -47,46 +64,57 @@ skillsRoutes.get("/", async (c) => {
 });
 
 /**
- * Uploads a new skill for a user.
+ * Uploads a new skill for the authenticated user.
  *
- * Stores the skill content in R2 and triggers an agent restart to load
- * the new skill.
+ * If projectId is provided, creates a project-scoped skill.
+ * Otherwise, creates a user-scoped skill (available in all projects).
  *
  * @route POST /
  */
 skillsRoutes.post("/", async (c) => {
   try {
-    const body = await c.req.json<{ userId: string; name: string; content: string }>();
+    const userId = getAuthUserId(c);
+    const body = await c.req.json<{
+      name: string;
+      content: string;
+      projectId?: string;
+    }>();
 
-    if (!body.userId) {
-      return c.json({ error: "userId is required" }, 400);
-    }
     if (!body.name || !body.content) {
       return c.json({ error: "name and content are required" }, 400);
     }
 
+    // Determine scope and R2 key
+    const scope = body.projectId ? 'project' : 'user';
+    const key = body.projectId
+      ? getProjectSkillKey(userId, body.projectId, body.name)
+      : getUserSkillKey(userId, body.name);
+
     // Store in R2
-    const key = getUserSkillKey(body.userId, body.name);
     await c.env.USER_DATA.put(key, body.content, {
       httpMetadata: {
         contentType: "text/markdown",
       },
       customMetadata: {
-        userId: body.userId,
+        userId,
+        scope,
+        projectId: body.projectId || '',
         uploadedAt: new Date().toISOString(),
       },
     });
 
     // Restart the agent process to discover the new skill
-    const result = await restartAgentForSkillsReload(c.env.Sandbox, c.env.USER_DATA, body.userId);
+    const result = await restartAgentForSkillsReload(c.env.Sandbox, c.env.USER_DATA, userId, body.projectId);
 
     return c.json({
       status: "success",
       message: result.restarted
         ? "Skill uploaded and agent restarted. The skill is now available."
         : "Skill uploaded. Refresh the page to load the new skill.",
-      userId: body.userId,
+      userId,
       skillName: body.name,
+      scope,
+      projectId: body.projectId || null,
       r2Key: key,
       agentRestarted: result.restarted,
       skillsLoaded: result.skillsLoaded,
@@ -98,35 +126,56 @@ skillsRoutes.post("/", async (c) => {
 });
 
 /**
- * Retrieves a specific skill's content and metadata.
+ * Retrieves a specific skill's content and metadata for the authenticated user.
  *
  * @route GET /:skillName
+ * @query projectId - If provided, looks for project-scoped skill first
  */
 skillsRoutes.get("/:skillName", async (c) => {
   try {
-    const userId = c.req.query("userId");
-    if (!userId) {
-      return c.json({ error: "userId query parameter is required" }, 400);
+    const userId = getAuthUserId(c);
+    const skillName = c.req.param("skillName");
+    const projectId = c.req.query("projectId");
+
+    // Try project-scoped skill first if projectId provided
+    if (projectId) {
+      const projectKey = getProjectSkillKey(userId, projectId, skillName);
+      const projectObj = await c.env.USER_DATA.get(projectKey);
+      if (projectObj) {
+        const content = await projectObj.text();
+        const metadata = projectObj.customMetadata;
+        return c.json({
+          userId,
+          skillName,
+          scope: 'project',
+          projectId,
+          content,
+          metadata,
+          uploaded: projectObj.uploaded,
+          size: projectObj.size,
+        });
+      }
     }
 
-    const skillName = c.req.param("skillName");
-    const key = getUserSkillKey(userId, skillName);
-
-    const obj = await c.env.USER_DATA.get(key);
-    if (!obj) {
+    // Fall back to user-scoped skill
+    const userKey = getUserSkillKey(userId, skillName);
+    const userObj = await c.env.USER_DATA.get(userKey);
+    if (!userObj) {
       return c.json({ error: "Skill not found" }, 404);
     }
 
-    const content = await obj.text();
-    const metadata = obj.customMetadata;
+    const content = await userObj.text();
+    const metadata = userObj.customMetadata;
 
     return c.json({
       userId,
       skillName,
+      scope: 'user',
+      projectId: null,
       content,
       metadata,
-      uploaded: obj.uploaded,
-      size: obj.size,
+      uploaded: userObj.uploaded,
+      size: userObj.size,
     });
   } catch (error: any) {
     console.error("[API Skills Get Error]", error);
@@ -135,22 +184,41 @@ skillsRoutes.get("/:skillName", async (c) => {
 });
 
 /**
- * Deletes a skill for a user.
- *
- * Removes the skill from R2 storage and triggers an agent restart
- * to remove the skill from the agent's knowledge.
+ * Deletes a skill for the authenticated user.
  *
  * @route DELETE /:skillName
+ * @query projectId - If provided, deletes project-scoped skill
+ * @query scope - 'user' or 'project' to explicitly specify which to delete
  */
 skillsRoutes.delete("/:skillName", async (c) => {
   try {
-    const userId = c.req.query("userId");
-    if (!userId) {
-      return c.json({ error: "userId query parameter is required" }, 400);
-    }
-
+    const userId = getAuthUserId(c);
     const skillName = c.req.param("skillName");
-    const key = getUserSkillKey(userId, skillName);
+    const projectId = c.req.query("projectId");
+    const scope = c.req.query("scope") as 'user' | 'project' | undefined;
+
+    // Determine which skill to delete
+    let key: string;
+    let actualScope: 'user' | 'project';
+
+    if (scope === 'project' && projectId) {
+      key = getProjectSkillKey(userId, projectId, skillName);
+      actualScope = 'project';
+    } else if (scope === 'user' || !projectId) {
+      key = getUserSkillKey(userId, skillName);
+      actualScope = 'user';
+    } else {
+      // Default: try project first, then user
+      const projectKey = getProjectSkillKey(userId, projectId, skillName);
+      const projectObj = await c.env.USER_DATA.get(projectKey);
+      if (projectObj) {
+        key = projectKey;
+        actualScope = 'project';
+      } else {
+        key = getUserSkillKey(userId, skillName);
+        actualScope = 'user';
+      }
+    }
 
     // Check if skill exists
     const obj = await c.env.USER_DATA.get(key);
@@ -162,7 +230,7 @@ skillsRoutes.delete("/:skillName", async (c) => {
     await c.env.USER_DATA.delete(key);
 
     // Restart the agent process to remove the deleted skill
-    const result = await restartAgentForSkillsReload(c.env.Sandbox, c.env.USER_DATA, userId);
+    const result = await restartAgentForSkillsReload(c.env.Sandbox, c.env.USER_DATA, userId, projectId);
 
     return c.json({
       status: "deleted",
@@ -171,6 +239,8 @@ skillsRoutes.delete("/:skillName", async (c) => {
         : "Skill deleted. Refresh the page to update skills.",
       userId,
       skillName,
+      scope: actualScope,
+      projectId: actualScope === 'project' ? projectId : null,
       agentRestarted: result.restarted,
       remainingSkills: result.skillsLoaded,
     });

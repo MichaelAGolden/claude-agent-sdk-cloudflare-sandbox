@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ES2022",
-    "moduleResolution": "node",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "outDir": "./dist",
     "rootDir": "./",
     "strict": true,
@@ -12,7 +12,9 @@
     "resolveJsonModule": true
   },
   "include": [
-    "agent-sdk.ts"
+    "agent-sdk.ts",
+    "lib/**/*.ts",
+    "routes/**/*.ts"
   ],
   "exclude": [
     "node_modules",

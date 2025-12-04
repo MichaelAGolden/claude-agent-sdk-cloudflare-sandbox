@@ -9,10 +9,10 @@
 
 import { Socket } from "socket.io";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { ExtendedOptions, Logger } from './types';
-import { SessionManager } from './SessionManager';
-import { QueryOrchestrator } from './QueryOrchestrator';
-import { log as defaultLog } from './logger';
+import type { ExtendedOptions, Logger } from './types.js';
+import { SessionManager } from './SessionManager.js';
+import { QueryOrchestrator } from './QueryOrchestrator.js';
+import { log as defaultLog, setLogSocket } from './logger.js';
 
 // ============================================================================
 // TYPES
@@ -147,13 +147,21 @@ function createMessageHandler(
     const currentSession = sessionManager.get(sessionId);
     if (currentSession && !currentSession.isQueryRunning) {
       log.info(`Starting new query loop with SDK session: ${requestedSdkSessionId}`, socket.id);
+      // Note: queryOrchestrator.start() is NOT awaited because:
+      // 1. prepareForQuery() runs synchronously, creating messageStream BEFORE any await
+      // 2. We want to push the message while the query loop is running, not after it completes
       queryOrchestrator.start(sessionId, options);
-      // Small delay to ensure MessageStream is initialized
-      await new Promise(resolve => setTimeout(resolve, 10));
+    } else if (currentSession?.isQueryRunning) {
+      // Query is already running - this message will be added to the existing stream
+      log.debug(`Query already running, will add message to existing stream`, undefined, socket.id);
     }
 
-    // Push message to stream
+    // Get the session again to access messageStream
+    // NOTE: messageStream is created synchronously in prepareForQuery(), so it should exist
+    // immediately after calling queryOrchestrator.start() without needing a delay.
     const updatedSession = sessionManager.get(sessionId);
+
+    // Verify messageStream exists and push the user message
     if (updatedSession?.messageStream) {
       const sdkMessage: SDKUserMessage = {
         type: 'user',
@@ -165,8 +173,16 @@ function createMessageHandler(
       log.debug(`Pushing user message to stream`, { promptLength: userPrompt?.length }, socket.id);
       updatedSession.messageStream.push(sdkMessage, socket.id);
     } else {
-      log.error(`Message stream not available despite starting query`, undefined, socket.id);
-      const errorPayload = { message: "Agent not ready" };
+      // This should rarely happen - only if query initialization failed synchronously
+      // or if there was an issue with session state
+      log.error(`Message stream not available for session ${sessionId}`, {
+        isQueryRunning: updatedSession?.isQueryRunning,
+        hasSession: !!updatedSession,
+      }, socket.id);
+      const errorPayload = {
+        message: "Agent not ready - please try again",
+        details: "Query initialization may have failed"
+      };
       log.outgoing(socket.id, 'error', errorPayload);
       socket.emit("error", errorPayload);
     }
@@ -369,6 +385,9 @@ export function registerSocketHandlers(socket: Socket, deps: SocketHandlerDeps):
   const log = deps.logger || defaultLog;
   const { sessionManager } = deps;
 
+  // Set global socket for log forwarding to worker
+  setLogSocket(socket);
+
   // Extract session ID from connection
   const sessionId = socket.handshake.query.sessionId as string;
   log.info(`New client connected`, socket.id);
@@ -408,6 +427,25 @@ export function registerSocketHandlers(socket: Socket, deps: SocketHandlerDeps):
   socket.on("get_history", createGetHistoryHandler(effectiveSessionId, deps, socket));
   socket.on("clear", createClearHandler(effectiveSessionId, deps, socket));
   socket.on("disconnect", createDisconnectHandler(effectiveSessionId, deps, socket));
+
+  // Debug event: client can request container diagnostics
+  socket.on("get_diagnostics", () => {
+    const session = sessionManager.get(effectiveSessionId);
+    const diagnostics = {
+      sessionId: effectiveSessionId,
+      socketId: socket.id,
+      isConnected: socket.connected,
+      isQueryRunning: session?.isQueryRunning || false,
+      hasMessageStream: !!session?.messageStream,
+      messageStreamFinished: session?.messageStream?.isFinished() || false,
+      messageStreamQueueLength: session?.messageStream?.queueLength() || 0,
+      historyLength: sessionManager.getHistory(effectiveSessionId).length,
+      currentSdkSessionId: session?.currentSdkSessionId || null,
+      timestamp: new Date().toISOString(),
+    };
+    log.outgoing(socket.id, 'diagnostics', diagnostics);
+    socket.emit("diagnostics", diagnostics);
+  });
 }
 
 export default registerSocketHandlers;

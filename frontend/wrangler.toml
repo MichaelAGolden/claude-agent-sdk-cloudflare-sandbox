@@ -1,0 +1,34 @@
+name = "claude-agent-frontend"
+main = "worker.ts"
+account_id = "c8a3a4bee1a0c137e56b7adca8d3e8fe"
+compatibility_date = "2025-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+
+# Custom domains (no wildcards or paths allowed)
+[[routes]]
+pattern = "ezagentsdk.com"
+custom_domain = true
+
+[[routes]]
+pattern = "www.ezagentsdk.com"
+custom_domain = true
+
+[observability]
+enabled = true
+
+# Serve static assets from the build output
+[assets]
+directory = "../public"
+
+# Service binding to the backend worker
+[[services]]
+binding = "BACKEND"
+service = "claude-agent-worker"
+
+# Environment variables
+[vars]
+# BACKEND_WORKER_URL is now fetched via service binding from backend's /_info endpoint
+# This is kept as a fallback only - update backend's PUBLIC_URL instead
+BACKEND_WORKER_URL = "https://claude-agent-worker.michael-a-golden.workers.dev"
+# Note: VITE_* vars go in .env file (build-time), not here (runtime)

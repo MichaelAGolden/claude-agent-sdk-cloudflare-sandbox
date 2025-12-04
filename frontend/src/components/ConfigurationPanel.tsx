@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import type { ExtendedOptions } from "../types";
+import { CLAUDE_MODELS, MODEL_DISPLAY_NAMES, type ExtendedOptions } from "../types";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +17,22 @@ interface Props {
   options: ExtendedOptions;
   onChange: (options: ExtendedOptions) => void;
 }
+
+/**
+ * Available models for the configuration panel.
+ * Shows current frontier models first, then legacy models.
+ */
+const AVAILABLE_MODELS = [
+  // Current frontier models (4.5 series)
+  { id: CLAUDE_MODELS.SONNET_4_5, group: "Current" },
+  { id: CLAUDE_MODELS.HAIKU_4_5, group: "Current" },
+  { id: CLAUDE_MODELS.OPUS_4_5, group: "Current" },
+  // Legacy models
+  { id: CLAUDE_MODELS.OPUS_4_1, group: "Legacy" },
+  { id: CLAUDE_MODELS.SONNET_4, group: "Legacy" },
+  { id: CLAUDE_MODELS.SONNET_3_7, group: "Legacy" },
+  { id: CLAUDE_MODELS.HAIKU_3_5, group: "Legacy" },
+];
 
 export const ConfigurationPanel: React.FC<Props> = ({ options, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -46,22 +62,27 @@ export const ConfigurationPanel: React.FC<Props> = ({ options, onChange }) => {
           <div className="space-y-2">
             <Label htmlFor="model">Model</Label>
             <Select
-              value={options.model || "claude-sonnet-4-5-20250929"}
+              value={options.model || CLAUDE_MODELS.SONNET_4_5}
               onValueChange={(value) => handleChange("model", value)}
             >
               <SelectTrigger id="model">
                 <SelectValue placeholder="Select a model" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="claude-sonnet-4-5-20250929">
-                  claude-sonnet-4-5
-                </SelectItem>
-                <SelectItem value="claude-haiku-4-5-20251001">
-                  claude-haiku-4-5
-                </SelectItem>
-                <SelectItem value="claude-opus-4-1-20250805">
-                  claude-opus-4-1
-                </SelectItem>
+                {/* Current models */}
+                <div className="px-2 py-1 text-xs text-muted-foreground font-medium">Current</div>
+                {AVAILABLE_MODELS.filter(m => m.group === "Current").map((model) => (
+                  <SelectItem key={model.id} value={model.id}>
+                    {MODEL_DISPLAY_NAMES[model.id] || model.id}
+                  </SelectItem>
+                ))}
+                {/* Legacy models */}
+                <div className="px-2 py-1 text-xs text-muted-foreground font-medium mt-2">Legacy</div>
+                {AVAILABLE_MODELS.filter(m => m.group === "Legacy").map((model) => (
+                  <SelectItem key={model.id} value={model.id}>
+                    {MODEL_DISPLAY_NAMES[model.id] || model.id}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

@@ -10,6 +10,25 @@
 import type { Bindings } from "./types";
 
 /**
+ * Normalizes a user ID to lowercase for sandbox compatibility.
+ *
+ * Cloudflare Sandbox IDs are used in hostnames which are case-insensitive.
+ * User IDs from authentication providers like Clerk often contain uppercase
+ * letters (e.g., "user_35yar6ZIrFf6GWUTXCZoZPUWMLt"). This function normalizes
+ * them once at the source to prevent issues downstream.
+ *
+ * @param userId - The user ID from authentication provider
+ * @returns Lowercase normalized user ID
+ *
+ * @example
+ * const userId = normalizeUserId(clerkUserId);
+ * // "user_35yar6ZIrFf6GWUTXCZoZPUWMLt" -> "user_35yar6zirff6gwutxczozpuwmlt"
+ */
+export const normalizeUserId = (userId: string): string => {
+  return userId.toLowerCase();
+};
+
+/**
  * Generates a cryptographically secure UUID v4.
  *
  * Uses the Web Crypto API available in Cloudflare Workers for
@@ -81,6 +100,43 @@ export const getUserSkillsPrefix = (userId: string): string => {
 };
 
 /**
+ * Constructs the R2 object key for a project-scoped skill file.
+ *
+ * Project skills are stored in R2 with a hierarchical structure:
+ * `users/{userId}/projects/{projectId}/skills/{skillName}/SKILL.md`
+ *
+ * @param userId - The unique identifier for the user
+ * @param projectId - The project this skill belongs to
+ * @param skillName - The name of the skill (directory name)
+ * @returns The full R2 object key path
+ *
+ * @example
+ * const key = getProjectSkillKey("user_123", "proj_456", "figma-helper");
+ * // Returns: "users/user_123/projects/proj_456/skills/figma-helper/SKILL.md"
+ */
+export const getProjectSkillKey = (userId: string, projectId: string, skillName: string): string => {
+  return `users/${userId}/projects/${projectId}/skills/${skillName}/SKILL.md`;
+};
+
+/**
+ * Constructs the R2 prefix for listing a project's skills directory.
+ *
+ * Used with R2's list() operation to enumerate all skills
+ * belonging to a specific project.
+ *
+ * @param userId - The unique identifier for the user
+ * @param projectId - The project ID
+ * @returns The R2 prefix path for the project's skills directory
+ *
+ * @example
+ * const prefix = getProjectSkillsPrefix("user_123", "proj_456");
+ * // Returns: "users/user_123/projects/proj_456/skills/"
+ */
+export const getProjectSkillsPrefix = (userId: string, projectId: string): string => {
+  return `users/${userId}/projects/${projectId}/skills/`;
+};
+
+/**
  * Constructs the R2 object key for a session transcript.
  *
  * @param userId - The unique identifier for the user
@@ -110,4 +166,80 @@ export const getTranscriptR2Key = (userId: string, sessionId: string): string =>
  */
 export const getTranscriptLocalPath = (sessionId: string): string => {
   return `/root/.claude/projects/-workspace/${sessionId}.jsonl`;
+};
+
+// ============================================================================
+// AGENT STORAGE UTILITIES
+// ============================================================================
+
+/**
+ * Constructs the R2 object key for a user-scoped agent file.
+ *
+ * Agents are stored in R2 with a hierarchical structure:
+ * `users/{userId}/agents/{agentName}/AGENT.md`
+ *
+ * @param userId - The unique identifier for the user
+ * @param agentName - The name of the agent (directory name)
+ * @returns The full R2 object key path
+ *
+ * @example
+ * const key = getUserAgentKey("user_123", "code-reviewer");
+ * // Returns: "users/user_123/agents/code-reviewer/AGENT.md"
+ */
+export const getUserAgentKey = (userId: string, agentName: string): string => {
+  return `users/${userId}/agents/${agentName}/AGENT.md`;
+};
+
+/**
+ * Constructs the R2 prefix for listing a user's agents directory.
+ *
+ * Used with R2's list() operation to enumerate all agents
+ * belonging to a user.
+ *
+ * @param userId - The unique identifier for the user
+ * @returns The R2 prefix path for the user's agents directory
+ *
+ * @example
+ * const prefix = getUserAgentsPrefix("user_123");
+ * // Returns: "users/user_123/agents/"
+ */
+export const getUserAgentsPrefix = (userId: string): string => {
+  return `users/${userId}/agents/`;
+};
+
+/**
+ * Constructs the R2 object key for a project-scoped agent file.
+ *
+ * Project agents are stored in R2 with a hierarchical structure:
+ * `users/{userId}/projects/{projectId}/agents/{agentName}/AGENT.md`
+ *
+ * @param userId - The unique identifier for the user
+ * @param projectId - The project this agent belongs to
+ * @param agentName - The name of the agent (directory name)
+ * @returns The full R2 object key path
+ *
+ * @example
+ * const key = getProjectAgentKey("user_123", "proj_456", "security-scanner");
+ * // Returns: "users/user_123/projects/proj_456/agents/security-scanner/AGENT.md"
+ */
+export const getProjectAgentKey = (userId: string, projectId: string, agentName: string): string => {
+  return `users/${userId}/projects/${projectId}/agents/${agentName}/AGENT.md`;
+};
+
+/**
+ * Constructs the R2 prefix for listing a project's agents directory.
+ *
+ * Used with R2's list() operation to enumerate all agents
+ * belonging to a specific project.
+ *
+ * @param userId - The unique identifier for the user
+ * @param projectId - The project ID
+ * @returns The R2 prefix path for the project's agents directory
+ *
+ * @example
+ * const prefix = getProjectAgentsPrefix("user_123", "proj_456");
+ * // Returns: "users/user_123/projects/proj_456/agents/"
+ */
+export const getProjectAgentsPrefix = (userId: string, projectId: string): string => {
+  return `users/${userId}/projects/${projectId}/agents/`;
 };

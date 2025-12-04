@@ -14,9 +14,12 @@ import { healthRoutes } from "./health.routes";
 import { threadsRoutes } from "./threads.routes";
 import { sessionsRoutes } from "./sessions.routes";
 import { skillsRoutes } from "./skills.routes";
+import { agentsRoutes } from "./agents.routes";
 import { usersRoutes } from "./users.routes";
 import { sandboxRoutes } from "./sandbox.routes";
 import { agentRoutes } from "./agent.routes";
+import { projectsRoutes } from "./projects.routes";
+import { filesRoutes } from "./files.routes";
 
 /**
  * Registers all route groups on the main Hono application.
@@ -43,9 +46,12 @@ export const registerRoutes = (app: Hono<{ Bindings: Bindings }>): void => {
 
   // Public API endpoints
   app.route("/api/threads", threadsRoutes);
+  app.route("/api/projects", projectsRoutes);
   app.route("/api/sessions", sessionsRoutes);
   app.route("/api/skills", skillsRoutes);
+  app.route("/api/agents", agentsRoutes);
   app.route("/api/agent", agentRoutes);
+  app.route("/api/files", filesRoutes);
 
   // Protected user resources
   app.route("/users", usersRoutes);
@@ -59,9 +65,12 @@ export { healthRoutes } from "./health.routes";
 export { threadsRoutes } from "./threads.routes";
 export { sessionsRoutes } from "./sessions.routes";
 export { skillsRoutes } from "./skills.routes";
+export { agentsRoutes } from "./agents.routes";
 export { agentRoutes } from "./agent.routes";
+export { projectsRoutes } from "./projects.routes";
 export { usersRoutes } from "./users.routes";
 export { sandboxRoutes } from "./sandbox.routes";
+export { filesRoutes } from "./files.routes";
 
 // Re-export middleware
 export { requireApiKey } from "./middleware";

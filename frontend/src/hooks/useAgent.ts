@@ -53,6 +53,7 @@ export const useAgent = () => {
     messages: [],
     isStreaming: false,
     socketId: null,
+    streamTermination: null,
   });
 
   const socketRef = useRef<Socket | null>(null);

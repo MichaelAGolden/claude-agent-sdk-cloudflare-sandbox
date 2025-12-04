@@ -13,10 +13,10 @@ import type {
   Logger,
   EmitToClientFn,
   AssistantContentBlock
-} from './types';
-import { SessionManager } from './SessionManager';
-import { HookHandler } from './HookHandler';
-import { log as defaultLog } from './logger';
+} from './types.js';
+import { SessionManager } from './SessionManager.js';
+import { HookHandler } from './HookHandler.js';
+import { log as defaultLog } from './logger.js';
 
 // ============================================================================
 // CONFIGURATION
@@ -33,8 +33,27 @@ export const DEFAULT_ALLOWED_TOOLS = [
 
 /**
  * Default model for SDK queries.
+ * Uses Claude Sonnet 4.5 - best for complex agents and coding.
  */
 export const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
+
+/**
+ * Supported Claude model API IDs.
+ * @see https://platform.claude.com/docs/en/about-claude/models/overview
+ */
+export const SUPPORTED_MODELS = [
+  // Current frontier models (4.5 series)
+  "claude-sonnet-4-5-20250929",
+  "claude-haiku-4-5-20251001",
+  "claude-opus-4-5-20251101",
+  // Legacy models
+  "claude-opus-4-1-20250805",
+  "claude-sonnet-4-20250514",
+  "claude-opus-4-20250514",
+  "claude-3-7-sonnet-20250219",
+  "claude-3-5-haiku-20241022",
+  "claude-3-haiku-20240307",
+];
 
 /**
  * Default working directory for SDK queries.
@@ -131,7 +150,12 @@ export class QueryOrchestrator {
     this.log.info(`Starting agent query for session ${sessionId}`, session.currentSocket.id);
 
     // Prepare session for query
+    // NOTE: This sets isQueryRunning = true and creates messageStream synchronously
+    // Any error after this point MUST call cleanupQuery to reset the state
     this.sessionManager.prepareForQuery(sessionId);
+
+    // Track whether we successfully started iterating over the SDK query
+    let queryStarted = false;
 
     // Create emit function bound to current session
     const emitToClient: EmitToClientFn = (event: string, data?: unknown) => {
@@ -182,15 +206,26 @@ export class QueryOrchestrator {
       session.queryIterator = q;
       this.log.info("Starting query stream processing...", sessionId);
 
+      // Mark that we've successfully started the query
+      queryStarted = true;
+
       // Process message stream
       await this.processMessageStream(q, sessionId, emitToClient);
 
     } catch (error: unknown) {
       const err = error as Error;
       this.log.error(`Error for session ${sessionId}`, err);
+
+      // Log additional context if query failed to start
+      if (!queryStarted) {
+        console.error(`[QueryOrchestrator] CRITICAL: Query failed to start for session ${sessionId}. Error occurred before SDK iteration began.`);
+        console.error(`[QueryOrchestrator] This may leave messageStream in unusable state.`);
+      }
+
       emitToClient("error", { message: err.message || "An error occurred", details: err });
     } finally {
-      // Cleanup
+      // Cleanup - ALWAYS runs to reset state even if query failed to start
+      this.log.info(`Cleaning up query for session ${sessionId} (queryStarted=${queryStarted})`, sessionId);
       this.sessionManager.cleanupQuery(sessionId);
     }
   }
@@ -254,20 +289,40 @@ export class QueryOrchestrator {
     emitToClient: EmitToClientFn
   ): Promise<void> {
     let messageCount = 0;
+    let lastMessageTime = Date.now();
+
+    console.log(`[SDK STREAM] Starting message stream processing for session ${sessionId}`);
 
     for await (const message of q) {
+      const now = Date.now();
+      const timeSinceLastMessage = now - lastMessageTime;
+      lastMessageTime = now;
+
       messageCount++;
       const msg = message as Record<string, unknown>;
       const currentSocketId = this.sessionManager.getSocket(sessionId)?.id || sessionId;
 
-      // Log every message from the SDK
-      console.log(`[SDK MESSAGE ${messageCount}] type=${msg.type}`);
+      // Log every message from the SDK with timing info
+      console.log(`[SDK MESSAGE ${messageCount}] type=${msg.type} (${timeSinceLastMessage}ms since last)`);
+
+      // For tool use messages, log the tool name
+      if (msg.type === 'assistant') {
+        const assistantMsg = msg.message as { content?: Array<{ type: string; name?: string }> };
+        if (assistantMsg?.content) {
+          const toolUses = assistantMsg.content.filter(b => b.type === 'tool_use');
+          if (toolUses.length > 0) {
+            console.log(`[SDK MESSAGE ${messageCount}] Tool uses:`, toolUses.map(t => t.name).join(', '));
+          }
+        }
+      }
+
       this.log.sdkMessage(currentSocketId, msg.type as string, { messageNumber: messageCount });
 
       // Route message based on type
       this.routeMessage(msg, sessionId, emitToClient, currentSocketId);
     }
 
+    console.log(`[SDK STREAM] Stream completed. Total messages: ${messageCount}, session: ${sessionId}`);
     this.log.info(`Query stream completed. Total messages: ${messageCount}`, sessionId);
   }
 

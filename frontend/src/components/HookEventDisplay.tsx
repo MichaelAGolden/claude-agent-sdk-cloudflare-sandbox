@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { ChevronRight, ChevronDown, Wrench, Play, Square, Bell, User, Zap, LogOut, Minimize2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, Wrench, Play, Square, Bell, User, Zap, LogOut, Minimize2, Terminal } from 'lucide-react';
 import type { HookEvent, HookEventType } from '../types/index.ts';
+import { StandaloneMarkdown } from './assistant-ui/standalone-markdown';
 
 interface HookEventDisplayProps {
   hookEvent: HookEvent;
@@ -17,6 +18,7 @@ const hookConfig: Record<HookEventType, { icon: typeof Wrench; color: string; la
   Stop: { icon: Square, color: 'text-orange-500', label: 'Stop' },
   SubagentStop: { icon: Square, color: 'text-orange-400', label: 'Subagent Stop' },
   PreCompact: { icon: Minimize2, color: 'text-gray-500', label: 'Pre Compact' },
+  SkillCommand: { icon: Terminal, color: 'text-indigo-500', label: 'Skill Execution' },
 };
 
 // Extract a brief summary from hook data
@@ -32,6 +34,19 @@ function getHookSummary(eventType: HookEventType, data: any): string {
     case 'Stop':
     case 'SubagentStop':
       return data.reason || '';
+    case 'SkillCommand':
+      if (typeof data.content === 'string') {
+        // Try to extract command name from XML
+        const match = data.content.match(/<command-name>(.*?)<\/command-name>/);
+        if (match) return match[1];
+        
+        // Fallback to command message
+        const msgMatch = data.content.match(/<command-message>(.*?)<\/command-message>/);
+        if (msgMatch) return msgMatch[1];
+        
+        return 'Command output';
+      }
+      return '';
     default:
       return '';
   }
@@ -97,15 +112,26 @@ export function HookEventDisplay({ hookEvent }: HookEventDisplayProps) {
         {isExpanded && (
           <div className="border-t border-border/50 px-3 py-2 space-y-2">
             {/* Hook data */}
-            {hookEvent.data && Object.keys(hookEvent.data).length > 0 && (
-              <div>
-                <div className="text-[10px] font-medium text-muted-foreground uppercase mb-1">
-                  Data
+            {hookEvent.eventType === 'SkillCommand' ? (
+              // Special rendering for SkillCommand: Show formatted markdown
+              <div className="max-h-[60vh] overflow-y-auto">
+                 <div className="text-[10px] font-medium text-muted-foreground uppercase mb-1">
+                  Output
                 </div>
-                <pre className="text-[11px] bg-background/50 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto">
-                  {JSON.stringify(hookEvent.data, null, 2)}
-                </pre>
+                <StandaloneMarkdown content={hookEvent.data?.content || ''} className="text-xs" />
               </div>
+            ) : (
+              // Default rendering for other hooks
+              hookEvent.data && Object.keys(hookEvent.data).length > 0 && (
+                <div>
+                  <div className="text-[10px] font-medium text-muted-foreground uppercase mb-1">
+                    Data
+                  </div>
+                  <pre className="text-[11px] bg-background/50 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto">
+                    {JSON.stringify(hookEvent.data, null, 2)}
+                  </pre>
+                </div>
+              )
             )}
 
             {/* Response (for hook_request) */}

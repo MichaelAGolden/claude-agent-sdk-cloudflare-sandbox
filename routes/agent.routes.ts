@@ -1,9 +1,12 @@
 /**
  * @fileoverview Agent lifecycle API endpoints.
  *
- * Public-facing API for controlling the Claude Agent SDK lifecycle.
+ * Authenticated API for controlling the Claude Agent SDK lifecycle.
  * These endpoints allow the frontend to start, stop, and restart
  * the agent without refreshing the page or restarting the container.
+ *
+ * All endpoints require Clerk JWT authentication. The userId is extracted
+ * from the verified token to ensure users can only control their own agents.
  *
  * @module routes/agent
  */
@@ -18,20 +21,21 @@ import {
   isAgentRunning,
 } from "../services/sandbox.service";
 import { sandboxAgentState, clearAgentState } from "../state/agent-state";
+import { requireAuth, getAuthUserId } from "./middleware";
 
-const agentRoutes = new Hono<{ Bindings: Bindings }>();
+const agentRoutes = new Hono<{ Bindings: Bindings; Variables: { authenticatedUserId: string } }>();
+
+// Apply auth middleware to all routes
+agentRoutes.use("/*", requireAuth);
 
 /**
- * Gets the current agent status for a user.
+ * Gets the current agent status for the authenticated user.
  *
  * @route GET /status
  */
 agentRoutes.get("/status", async (c) => {
   try {
-    const userId = c.req.query("userId");
-    if (!userId) {
-      return c.json({ error: "userId query parameter is required" }, 400);
-    }
+    const userId = getAuthUserId(c);
 
     const sandbox = getSandbox(c.env.Sandbox, userId);
     const running = await isAgentRunning(sandbox);
@@ -50,7 +54,7 @@ agentRoutes.get("/status", async (c) => {
 });
 
 /**
- * Starts the agent for a user.
+ * Starts the agent for the authenticated user.
  *
  * This endpoint starts the Claude Agent SDK if it's not already running.
  * Skills should be loaded before calling this endpoint.
@@ -59,12 +63,7 @@ agentRoutes.get("/status", async (c) => {
  */
 agentRoutes.post("/start", async (c) => {
   try {
-    const body = await c.req.json<{ userId: string }>().catch(() => ({ userId: "" }));
-    const userId = body.userId || c.req.query("userId");
-
-    if (!userId) {
-      return c.json({ error: "userId is required" }, 400);
-    }
+    const userId = getAuthUserId(c);
 
     const sandbox = getSandbox(c.env.Sandbox, userId);
 
@@ -97,18 +96,13 @@ agentRoutes.post("/start", async (c) => {
 });
 
 /**
- * Stops the agent for a user.
+ * Stops the agent for the authenticated user.
  *
  * @route POST /stop
  */
 agentRoutes.post("/stop", async (c) => {
   try {
-    const body = await c.req.json<{ userId: string }>().catch(() => ({ userId: "" }));
-    const userId = body.userId || c.req.query("userId");
-
-    if (!userId) {
-      return c.json({ error: "userId is required" }, 400);
-    }
+    const userId = getAuthUserId(c);
 
     const sandbox = getSandbox(c.env.Sandbox, userId);
     const stopped = await stopAgentProcess(sandbox, userId);
@@ -133,7 +127,7 @@ agentRoutes.post("/stop", async (c) => {
 });
 
 /**
- * Restarts the agent with fresh skills from R2.
+ * Restarts the agent with fresh skills from R2 for the authenticated user.
  *
  * This is the primary endpoint for reloading skills. It:
  * 1. Stops the currently running agent (if any)
@@ -147,12 +141,7 @@ agentRoutes.post("/stop", async (c) => {
  */
 agentRoutes.post("/restart", async (c) => {
   try {
-    const body = await c.req.json<{ userId: string }>().catch(() => ({ userId: "" }));
-    const userId = body.userId || c.req.query("userId");
-
-    if (!userId) {
-      return c.json({ error: "userId is required" }, 400);
-    }
+    const userId = getAuthUserId(c);
 
     console.log(`[Agent] Restart requested for user ${userId}`);
 

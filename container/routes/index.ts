@@ -7,9 +7,9 @@
  */
 
 import { Express } from "express";
-import { registerHealthRoutes } from "./health";
-import { registerAdminRoutes } from "./admin";
-import { registerDebugRoutes } from "./debug";
+import { registerHealthRoutes } from "./health.js";
+import { registerAdminRoutes } from "./admin.js";
+import { registerDebugRoutes } from "./debug.js";
 
 /**
  * Registers all REST routes on the Express app.
@@ -36,8 +36,8 @@ export function registerRoutes(app: Express): void {
 }
 
 // Re-export individual route registration functions for granular control
-export { registerHealthRoutes } from "./health";
-export { registerAdminRoutes } from "./admin";
-export { registerDebugRoutes } from "./debug";
+export { registerHealthRoutes } from "./health.js";
+export { registerAdminRoutes } from "./admin.js";
+export { registerDebugRoutes } from "./debug.js";
 
 export default registerRoutes;

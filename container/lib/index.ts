@@ -7,20 +7,20 @@
  */
 
 // Types
-export * from './types';
+export * from './types.js';
 
 // Logger
-export { log, createLogger, getTimestamp, truncateStrings } from './logger';
-export type { LoggerOptions } from './logger';
+export { log, createLogger, getTimestamp, truncateStrings, setLogSocket, getLogSocket } from './logger.js';
+export type { LoggerOptions } from './logger.js';
 
 // MessageStream
-export { MessageStream, createMessageStream } from './MessageStream';
+export { MessageStream, createMessageStream } from './MessageStream.js';
 
 // SessionManager
-export { SessionManager, sessionManager, DEFAULT_DISCONNECT_TIMEOUT_MS } from './SessionManager';
+export { SessionManager, sessionManager, DEFAULT_DISCONNECT_TIMEOUT_MS } from './SessionManager.js';
 
 // HookHandler
-export { HookHandler, createHookHandler, DEFAULT_HOOK_TIMEOUT_MS, AUTO_CONTINUE_HOOKS } from './HookHandler';
+export { HookHandler, createHookHandler, DEFAULT_HOOK_TIMEOUT_MS, AUTO_CONTINUE_HOOKS } from './HookHandler.js';
 
 // QueryOrchestrator
 export {
@@ -29,9 +29,9 @@ export {
   DEFAULT_ALLOWED_TOOLS,
   DEFAULT_MODEL,
   DEFAULT_CWD
-} from './QueryOrchestrator';
-export type { QueryOrchestratorDeps } from './QueryOrchestrator';
+} from './QueryOrchestrator.js';
+export type { QueryOrchestratorDeps } from './QueryOrchestrator.js';
 
 // SocketHandlers
-export { registerSocketHandlers } from './SocketHandlers';
-export type { SocketHandlerDeps } from './SocketHandlers';
+export { registerSocketHandlers } from './SocketHandlers.js';
+export type { SocketHandlerDeps } from './SocketHandlers.js';

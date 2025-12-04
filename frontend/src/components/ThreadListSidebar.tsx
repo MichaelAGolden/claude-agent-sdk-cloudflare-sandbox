@@ -4,6 +4,8 @@ import { useThreads } from "@/contexts/ThreadContext";
 import { useAgent } from "@/contexts/AgentContext";
 import { ConfirmThreadSwitch } from "@/components/ConfirmThreadSwitch";
 import { ConfirmDeleteThread } from "@/components/ConfirmDeleteThread";
+import { SkillsManager } from "@/components/SkillsManager";
+import { AgentsManager } from "@/components/AgentsManager";
 import {
   Sidebar,
   SidebarContent,
@@ -29,8 +31,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export function ThreadListSidebar() {
-  const { state, createThread, deleteThread, requestThreadSwitch, cancelPendingSwitch, confirmPendingSwitch, updateThreadTitle } = useThreads();
-  const { threads, currentThreadId, isLoading, pendingSwitch } = state;
+  const { state, filteredThreads, createThread, deleteThread, requestThreadSwitch, cancelPendingSwitch, confirmPendingSwitch, updateThreadTitle } = useThreads();
+  const { currentThreadId, isLoading, pendingSwitch } = state;
 
   const { state: agentState, interruptForSwitch } = useAgent();
   const { isStreaming } = agentState;
@@ -131,7 +133,7 @@ export function ThreadListSidebar() {
                     </SidebarMenuItem>
                   ))}
                 </>
-              ) : threads.length === 0 ? (
+              ) : filteredThreads.length === 0 ? (
                 // Empty state
                 <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                   <MessageSquareIcon className="mx-auto h-8 w-8 mb-2 opacity-50" />
@@ -147,7 +149,7 @@ export function ThreadListSidebar() {
                 </div>
               ) : (
                 // Thread list
-                threads.map((thread) => (
+                filteredThreads.map((thread) => (
                   <SidebarMenuItem key={thread.id}>
                     <SidebarMenuButton
                       onClick={() => handleSwitchThread(thread.id)}
@@ -251,11 +253,17 @@ export function ThreadListSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {/* Skills Management Section */}
+        <SkillsManager />
+
+        {/* Agents Management Section */}
+        <AgentsManager />
       </SidebarContent>
 
       <SidebarFooter className="border-t">
         <div className="px-4 py-2 text-xs text-muted-foreground">
-          {threads.length} conversation{threads.length !== 1 ? "s" : ""}
+          {filteredThreads.length} conversation{filteredThreads.length !== 1 ? "s" : ""}
         </div>
       </SidebarFooter>
 

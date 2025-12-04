@@ -6,9 +6,12 @@ import { useAuth } from '@clerk/clerk-react';
 export interface Thread {
   id: string;
   user_id: string;
+  project_id: string | null;
   session_id: string | null;
   title: string;
   summary: string | null;
+  /** Claude model API ID for this thread */
+  model: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -31,6 +34,7 @@ interface ThreadState {
   threads: Thread[];
   currentThreadId: string | null;
   currentThread: Thread | null;
+  currentProjectId: string | null;
   isLoading: boolean;
   error: string | null;
   pendingSwitch: PendingThreadSwitch | null;
@@ -38,6 +42,8 @@ interface ThreadState {
 
 interface ThreadContextType {
   state: ThreadState;
+  /** Threads filtered by current project */
+  filteredThreads: Thread[];
   createThread: (title?: string) => Promise<Thread | null>;
   deleteThread: (threadId: string) => Promise<boolean>;
   switchThread: (threadId: string) => Promise<void>;
@@ -46,8 +52,10 @@ interface ThreadContextType {
   confirmPendingSwitch: () => Promise<string | null>;
   updateThreadTitle: (threadId: string, title: string) => Promise<void>;
   updateThreadSessionId: (threadId: string, sessionId: string) => Promise<void>;
+  updateThreadModel: (threadId: string, model: string) => Promise<void>;
   generateTitle: (threadId: string) => Promise<void>;
   refreshThreads: () => Promise<void>;
+  setCurrentProjectId: (projectId: string | null) => void;
 }
 
 const ThreadContext = createContext<ThreadContextType | null>(null);
@@ -55,26 +63,58 @@ const ThreadContext = createContext<ThreadContextType | null>(null);
 // API base URL - use proxy in development
 const API_BASE = '';
 
+/**
+ * Helper to create authenticated fetch with Clerk JWT
+ */
+const createAuthFetch = (getToken: () => Promise<string | null>) => {
+  return async (path: string, options: RequestInit = {}): Promise<Response> => {
+    const token = await getToken();
+    const headers = new Headers(options.headers);
+
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    if (options.body && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+
+    return fetch(`${API_BASE}${path}`, { ...options, headers });
+  };
+};
+
 export function ThreadProvider({ children }: { children: ReactNode }) {
-  const { userId, isLoaded: isAuthLoaded } = useAuth();
+  const { userId, isLoaded: isAuthLoaded, getToken } = useAuth();
 
   const [state, setState] = useState<ThreadState>({
     threads: [],
     currentThreadId: null,
     currentThread: null,
+    currentProjectId: null,
     isLoading: false,
     error: null,
     pendingSwitch: null,
   });
 
-  // Fetch all threads for the current user
+  // Filter threads by current project
+  const filteredThreads = state.currentProjectId
+    ? state.threads.filter(t => t.project_id === state.currentProjectId)
+    : state.threads;
+
+  // Create authenticated fetch function
+  const authFetch = useCallback(
+    (path: string, options?: RequestInit) => createAuthFetch(getToken)(path, options),
+    [getToken]
+  );
+
+  // Fetch all threads for the current user (userId comes from JWT, not query param)
   const refreshThreads = useCallback(async () => {
     if (!userId) return;
 
     setState(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      const response = await fetch(`${API_BASE}/api/threads?userId=${encodeURIComponent(userId)}`);
+      // No userId in URL - backend extracts it from JWT
+      const response = await authFetch('/api/threads');
       if (!response.ok) {
         throw new Error('Failed to fetch threads');
       }
@@ -99,17 +139,30 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
         error: error.message,
       }));
     }
-  }, [userId]);
+  }, [userId, authFetch]);
 
-  // Create a new thread
+  // Set current project ID (called by ProjectContext when project changes)
+  const setCurrentProjectId = useCallback((projectId: string | null) => {
+    setState(prev => {
+      // Clear current thread if it doesn't belong to the new project
+      const shouldClearThread = prev.currentThread && prev.currentThread.project_id !== projectId;
+      return {
+        ...prev,
+        currentProjectId: projectId,
+        currentThreadId: shouldClearThread ? null : prev.currentThreadId,
+        currentThread: shouldClearThread ? null : prev.currentThread,
+      };
+    });
+  }, []);
+
+  // Create a new thread (userId comes from JWT, not request body)
   const createThread = useCallback(async (title?: string): Promise<Thread | null> => {
     if (!userId) return null;
 
     try {
-      const response = await fetch(`${API_BASE}/api/threads`, {
+      const response = await authFetch('/api/threads', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, title }),
+        body: JSON.stringify({ title, projectId: state.currentProjectId }),
       });
 
       if (!response.ok) {
@@ -131,12 +184,12 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
       setState(prev => ({ ...prev, error: error.message }));
       return null;
     }
-  }, [userId]);
+  }, [userId, authFetch, state.currentProjectId]);
 
   // Delete a thread
   const deleteThread = useCallback(async (threadId: string): Promise<boolean> => {
     try {
-      const response = await fetch(`${API_BASE}/api/threads/${threadId}`, {
+      const response = await authFetch(`/api/threads/${threadId}`, {
         method: 'DELETE',
       });
 
@@ -167,7 +220,7 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
       setState(prev => ({ ...prev, error: error.message }));
       return false;
     }
-  }, []);
+  }, [authFetch]);
 
   // Switch to a different thread
   const switchThread = useCallback(async (threadId: string): Promise<void> => {
@@ -233,9 +286,8 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   // Update thread title
   const updateThreadTitle = useCallback(async (threadId: string, title: string): Promise<void> => {
     try {
-      const response = await fetch(`${API_BASE}/api/threads/${threadId}`, {
+      const response = await authFetch(`/api/threads/${threadId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),
       });
 
@@ -258,14 +310,13 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
       console.error('[ThreadContext] Failed to update title:', error);
       setState(prev => ({ ...prev, error: error.message }));
     }
-  }, []);
+  }, [authFetch]);
 
   // Update thread session ID (called when SDK returns session)
   const updateThreadSessionId = useCallback(async (threadId: string, sessionId: string): Promise<void> => {
     try {
-      const response = await fetch(`${API_BASE}/api/threads/${threadId}`, {
+      const response = await authFetch(`/api/threads/${threadId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId }),
       });
 
@@ -287,12 +338,40 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     } catch (error: any) {
       console.error('[ThreadContext] Failed to update session:', error);
     }
-  }, []);
+  }, [authFetch]);
+
+  // Update thread model (called when user changes model in UI)
+  const updateThreadModel = useCallback(async (threadId: string, model: string): Promise<void> => {
+    try {
+      const response = await authFetch(`/api/threads/${threadId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ model }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update thread model');
+      }
+
+      const updatedThread: Thread = await response.json();
+
+      setState(prev => ({
+        ...prev,
+        threads: prev.threads.map(t =>
+          t.id === threadId ? updatedThread : t
+        ),
+        currentThread: prev.currentThreadId === threadId
+          ? updatedThread
+          : prev.currentThread,
+      }));
+    } catch (error: any) {
+      console.error('[ThreadContext] Failed to update model:', error);
+    }
+  }, [authFetch]);
 
   // Generate title using Haiku
   const generateTitle = useCallback(async (threadId: string): Promise<void> => {
     try {
-      const response = await fetch(`${API_BASE}/api/threads/${threadId}/title`, {
+      const response = await authFetch(`/api/threads/${threadId}/title`, {
         method: 'POST',
       });
 
@@ -314,7 +393,7 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     } catch (error: any) {
       console.error('[ThreadContext] Failed to generate title:', error);
     }
-  }, []);
+  }, [authFetch]);
 
   // Fetch threads when user is authenticated
   useEffect(() => {
@@ -323,10 +402,25 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     }
   }, [isAuthLoaded, userId, refreshThreads]);
 
+  // Listen for project switch events from ProjectContext
+  useEffect(() => {
+    const handleProjectSwitch = (event: CustomEvent<{ projectId: string }>) => {
+      setCurrentProjectId(event.detail.projectId);
+      // Refresh threads to pick up any project_id assignments from backend migration
+      refreshThreads();
+    };
+
+    window.addEventListener('project-switched', handleProjectSwitch as EventListener);
+    return () => {
+      window.removeEventListener('project-switched', handleProjectSwitch as EventListener);
+    };
+  }, [setCurrentProjectId, refreshThreads]);
+
   return (
     <ThreadContext.Provider
       value={{
         state,
+        filteredThreads,
         createThread,
         deleteThread,
         switchThread,
@@ -335,8 +429,10 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
         confirmPendingSwitch,
         updateThreadTitle,
         updateThreadSessionId,
+        updateThreadModel,
         generateTitle,
         refreshThreads,
+        setCurrentProjectId,
       }}
     >
       {children}

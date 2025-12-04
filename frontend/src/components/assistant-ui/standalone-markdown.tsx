@@ -5,7 +5,7 @@ import "@assistant-ui/react-markdown/styles/dot.css";
 import { type FC, memo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, ImageIcon, ExternalLink } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,8 @@ import { cn } from "@/lib/utils";
 interface StandaloneMarkdownProps {
   content: string;
   className?: string;
+  /** Session ID for fetching sandbox files (userId in our architecture) */
+  sessionId?: string;
 }
 
 const useCopyToClipboard = ({
@@ -32,6 +34,152 @@ const useCopyToClipboard = ({
   };
 
   return { isCopied, copyToClipboard };
+};
+
+/**
+ * Checks if a path is a sandbox file path that should be served via the file endpoint
+ */
+const isSandboxPath = (src: string): boolean => {
+  return src.startsWith('/workspace') || src.startsWith('/tmp');
+};
+
+/**
+ * Converts a sandbox path to a URL that fetches from the backend file endpoint
+ */
+const getSandboxFileUrl = (sessionId: string, filePath: string): string => {
+  const encodedPath = encodeURIComponent(filePath);
+  // In production, use same origin; in dev, use the backend URL
+  const baseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:8787'
+    : '';
+  return `${baseUrl}/sandbox/${sessionId}/file?path=${encodedPath}`;
+};
+
+/**
+ * Image component that handles sandbox file paths
+ */
+const SandboxImage: FC<{
+  src: string;
+  alt?: string;
+  sessionId?: string;
+}> = ({ src, alt, sessionId }) => {
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
+
+  // Determine the actual image URL
+  const imageUrl = sessionId && isSandboxPath(src)
+    ? getSandboxFileUrl(sessionId, src)
+    : src;
+
+  const handleLoad = () => setIsLoading(false);
+  const handleError = () => {
+    setIsLoading(false);
+    setHasError(true);
+  };
+
+  if (hasError) {
+    return (
+      <div className="my-4 flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/50 p-4 text-sm text-muted-foreground">
+        <ImageIcon className="h-5 w-5" />
+        <span>Failed to load image: {alt || src}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-4">
+      {isLoading && (
+        <div className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/50 p-4 text-sm text-muted-foreground">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <span>Loading image...</span>
+        </div>
+      )}
+      <img
+        src={imageUrl}
+        alt={alt || "Image"}
+        onLoad={handleLoad}
+        onError={handleError}
+        className={cn(
+          "max-w-full rounded-lg shadow-md transition-opacity",
+          isLoading ? "hidden" : "opacity-100"
+        )}
+      />
+      {!isLoading && sessionId && isSandboxPath(src) && (
+        <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+          <span className="font-mono">{src}</span>
+          <a
+            href={imageUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-1 hover:text-foreground"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
+ * Extracts image paths from text content
+ * Supports paths in various formats:
+ * - Plain text: /tmp/image.png
+ * - In backticks: `/tmp/image.png`
+ * - In markdown code: `path/to/image.png`
+ * - After "saved to": saved to /tmp/image.png
+ */
+const extractImagePaths = (text: string): string[] => {
+  const matches: string[] = [];
+
+  // Pattern 1: Paths in backticks like `/tmp/image.png`
+  const backtickPattern = /`(\/(?:workspace|tmp)\/[^`\s]+\.(?:png|jpg|jpeg|gif|webp|svg))`/gi;
+  let match;
+  while ((match = backtickPattern.exec(text)) !== null) {
+    matches.push(match[1]);
+  }
+
+  // Pattern 2: Plain paths with word boundary or whitespace
+  // This catches: "saved to /tmp/file.png" or "at /workspace/output.jpg"
+  const plainPattern = /(?:^|[\s:])(\/?(?:workspace|tmp)\/[^\s`"'<>]+\.(?:png|jpg|jpeg|gif|webp|svg))(?:[\s.,!?)]|$)/gi;
+  while ((match = plainPattern.exec(text)) !== null) {
+    // Clean up the path (remove leading slash if doubled)
+    let path = match[1];
+    if (!path.startsWith('/')) {
+      path = '/' + path;
+    }
+    matches.push(path);
+  }
+
+  // Deduplicate and return
+  return [...new Set(matches)];
+};
+
+/**
+ * Component that renders detected image paths as inline images
+ */
+const DetectedImages: FC<{ content: string; sessionId?: string }> = ({ content, sessionId }) => {
+  const imagePaths = extractImagePaths(content);
+
+  // Debug logging
+  if (imagePaths.length > 0) {
+    console.log('[DetectedImages] Found image paths:', imagePaths, 'sessionId:', sessionId);
+  }
+
+  if (imagePaths.length === 0 || !sessionId) {
+    if (imagePaths.length > 0 && !sessionId) {
+      console.warn('[DetectedImages] Found images but no sessionId available');
+    }
+    return null;
+  }
+
+  return (
+    <div className="mt-4 space-y-4">
+      {imagePaths.map((path, index) => (
+        <SandboxImage key={`detected-${index}-${path}`} src={path} sessionId={sessionId} />
+      ))}
+    </div>
+  );
 };
 
 const CodeBlock: FC<{ language?: string; code: string }> = ({ language, code }) => {
@@ -59,7 +207,7 @@ const CodeBlock: FC<{ language?: string; code: string }> = ({ language, code }) 
   );
 };
 
-const StandaloneMarkdownImpl: FC<StandaloneMarkdownProps> = ({ content, className }) => {
+const StandaloneMarkdownImpl: FC<StandaloneMarkdownProps> = ({ content, className, sessionId }) => {
   // Guard against null/undefined content
   if (!content || typeof content !== 'string') {
     console.warn("[StandaloneMarkdown] Invalid content:", content);
@@ -71,6 +219,11 @@ const StandaloneMarkdownImpl: FC<StandaloneMarkdownProps> = ({ content, classNam
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+        // Custom image renderer for sandbox files
+        img: ({ src, alt }) => {
+          if (!src) return null;
+          return <SandboxImage src={src} alt={alt} sessionId={sessionId} />;
+        },
         h1: ({ className: classNameProp, ...props }) => (
           <h1
             className={cn(
@@ -252,3 +405,6 @@ const StandaloneMarkdownImpl: FC<StandaloneMarkdownProps> = ({ content, classNam
 };
 
 export const StandaloneMarkdown = memo(StandaloneMarkdownImpl);
+
+// Export utilities for detecting images in raw text
+export { DetectedImages, extractImagePaths, isSandboxPath, getSandboxFileUrl };

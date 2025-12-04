@@ -14,9 +14,9 @@ import type {
   StoredMessage,
   Logger,
   ISessionManager
-} from './types';
-import { MessageStream } from './MessageStream';
-import { log as defaultLog } from './logger';
+} from './types.js';
+import { MessageStream } from './MessageStream.js';
+import { log as defaultLog } from './logger.js';
 
 // ============================================================================
 // CONFIGURATION
@@ -24,8 +24,13 @@ import { log as defaultLog } from './logger';
 
 /**
  * Default grace period (in ms) before cleaning up disconnected sessions.
+ *
+ * Set to 15 minutes to support long-running agent tasks (5-10 minutes).
+ * If the user's browser loses connection temporarily (network hiccup,
+ * laptop sleep, etc.), the agent can continue working and the user
+ * can reconnect to see results.
  */
-export const DEFAULT_DISCONNECT_TIMEOUT_MS = 60000; // 60 seconds
+export const DEFAULT_DISCONNECT_TIMEOUT_MS = 900000; // 15 minutes
 
 // ============================================================================
 // SESSION MANAGER CLASS

@@ -8,8 +8,8 @@
  * @module MessageStream
  */
 
-import type { SDKUserMessage, Logger } from './types';
-import { log as defaultLog } from './logger';
+import type { SDKUserMessage, Logger } from './types.js';
+import { log as defaultLog } from './logger.js';
 
 // ============================================================================
 // MESSAGE STREAM CLASS

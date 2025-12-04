@@ -29,3 +29,20 @@ export {
 export {
   generateThreadTitle,
 } from "./title-generator.service";
+
+// File sync service
+export {
+  extractFilePathsFromHook,
+  getFileR2Key,
+  getFilesR2Prefix,
+  getDirectoryR2Prefix,
+  syncSingleFile,
+  syncFilesFromHook,
+  syncDirectory,
+  fullSync,
+  restoreFromR2,
+  type FileSyncResult,
+  type DirectorySyncResult,
+  type FullSyncResult,
+  type RestoreResult,
+} from "./file-sync.service";

@@ -4,8 +4,6 @@ import { ModeToggle } from "./mode-toggle";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import {
-  CheckIcon,
-  CopyIcon,
   DatabaseIcon,
   GlobeIcon,
   LayersIcon,
@@ -23,15 +21,6 @@ import {
 
 export function LandingPage() {
   const [showSignIn, setShowSignIn] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  const cliCommand = "npx create-cloudflare@latest my-claude-agent -- --template=MichaelAGolden/claude-agent-sdk-cloudflare-sandbox";
-
-  const copyCommand = () => {
-    navigator.clipboard.writeText(cliCommand);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   if (showSignIn) {
     return (
@@ -93,11 +82,6 @@ export function LandingPage() {
       {/* Hero Section */}
       <section className="pt-32 pb-20 px-4">
         <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-500/10 text-orange-600 dark:text-orange-400 text-sm font-medium mb-6">
-            <ZapIcon className="h-4 w-4" />
-            Reference Implementation
-          </div>
-
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight mb-6">
             Deploy the Claude Agent SDK on{" "}
             <span className="text-orange-500">Cloudflare</span>{" "}
@@ -109,35 +93,6 @@ export function LandingPage() {
             AI agents with persistent conversations, real-time streaming, and the full
             Cloudflare stack.
           </p>
-
-          {/* CLI Command */}
-          <div className="relative max-w-3xl mx-auto mb-8">
-            <div className="bg-zinc-950 dark:bg-zinc-900 rounded-lg p-4 font-mono text-sm text-left overflow-x-auto">
-              <div className="flex items-center justify-between gap-4">
-                <code className="text-green-400 whitespace-nowrap">
-                  <span className="text-zinc-500">$</span> {cliCommand}
-                </code>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={copyCommand}
-                  className="shrink-0 text-zinc-400 hover:text-white"
-                >
-                  {copied ? <CheckIcon className="h-4 w-4" /> : <CopyIcon className="h-4 w-4" />}
-                </Button>
-              </div>
-            </div>
-            <p className="text-sm text-muted-foreground mt-3">
-              You'll need a{" "}
-              <a href="https://clerk.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline">
-                Clerk account
-              </a>{" "}
-              for authentication.{" "}
-              <a href="#deploy" className="text-orange-500 hover:underline">
-                See full setup guide →
-              </a>
-            </p>
-          </div>
 
           {/* CTAs */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
@@ -158,7 +113,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Architecture Diagram Section */}
+      {/* Architecture Overview Section */}
       <section className="py-20 px-4 bg-muted/30">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
@@ -169,120 +124,62 @@ export function LandingPage() {
             </p>
           </div>
 
-          {/* Architecture Diagram Placeholder */}
-          <div className="bg-card border rounded-xl p-8 mb-8">
-            <div className="aspect-[16/9] bg-muted rounded-lg flex items-center justify-center">
-              <div className="text-center text-muted-foreground">
-                <LayersIcon className="h-16 w-16 mx-auto mb-4 opacity-50" />
-                <p className="font-medium">Architecture Diagram</p>
-                <p className="text-sm mt-2 max-w-md">
-                  Full-stack architecture on Cloudflare's edge. Frontend Worker serves static
-                  assets and proxies API calls. Backend Worker handles Socket.IO, D1/R2 storage,
-                  and spawns Sandbox containers running the Claude Agent SDK.
-                </p>
-                {/* Mermaid diagram description for later */}
-                <details className="mt-4 text-left max-w-2xl mx-auto">
-                  <summary className="cursor-pointer text-xs text-muted-foreground/60 hover:text-muted-foreground">
-                    View Mermaid diagram spec
-                  </summary>
-                  <pre className="mt-2 p-3 bg-muted rounded text-xs overflow-x-auto">
-{`flowchart TB
-    subgraph Client
-        A[React Frontend<br/>Socket.IO Client]
-    end
-
-    subgraph External
-        I[Clerk Auth]
-        J[Anthropic API]
-    end
-
-    subgraph Cloudflare["Cloudflare Edge"]
-        B[Frontend Worker<br/>Static Assets + API Proxy]
-        C[Backend Worker<br/>Hono + Socket.IO]
-    end
-
-    subgraph Sandbox["Cloudflare Sandbox"]
-        E[Container<br/>Express + Socket.IO]
-        F[Claude Agent SDK]
-    end
-
-    subgraph Storage
-        G[(D1 Database<br/>Threads, Messages, Users)]
-        H[(R2 Bucket<br/>Transcripts, Skills)]
-    end
-
-    A -->|Auth| I
-    A -->|Static Assets| B
-    A -.->|WebSocket| C
-    B -->|Service Binding| C
-    C -->|wsConnect :3001| E
-    E --> F
-    F -->|API Calls| J
-    C -->|Read/Write| G
-    C -->|Sync Transcripts| H
-    E -.->|Mount Skills| H`}
-                  </pre>
-                </details>
+          <div className="grid md:grid-cols-2 gap-8">
+            {/* Architecture Overview */}
+            <div className="bg-card border rounded-xl p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="h-10 w-10 rounded-lg bg-orange-500/10 flex items-center justify-center">
+                  <LayersIcon className="h-5 w-5 text-orange-500" />
+                </div>
+                <h3 className="font-semibold">Full-Stack on the Edge</h3>
               </div>
+              <p className="text-sm text-muted-foreground mb-4">
+                Frontend Worker serves static assets and proxies API calls. Backend Worker
+                handles Socket.IO, D1/R2 storage, and spawns Sandbox containers running
+                the Claude Agent SDK.
+              </p>
+              <ul className="text-sm text-muted-foreground space-y-2">
+                <li className="flex items-center gap-2">
+                  <div className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+                  React frontend deployed to Workers
+                </li>
+                <li className="flex items-center gap-2">
+                  <div className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+                  Hono backend with Socket.IO support
+                </li>
+                <li className="flex items-center gap-2">
+                  <div className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+                  Isolated sandbox per user
+                </li>
+              </ul>
             </div>
-          </div>
 
-          {/* Data Flow Diagram Placeholder */}
-          <div className="bg-card border rounded-xl p-8">
-            <div className="aspect-[16/7] bg-muted rounded-lg flex items-center justify-center">
-              <div className="text-center text-muted-foreground">
-                <MessageSquareIcon className="h-16 w-16 mx-auto mb-4 opacity-50" />
-                <p className="font-medium">Real-Time Streaming Flow</p>
-                <p className="text-sm mt-2 max-w-md">
-                  Complete message lifecycle: Socket.IO connection, real-time streaming from
-                  Claude API, SDK session capture for thread resumption, and post-streaming
-                  persistence to D1 and R2.
-                </p>
-                <details className="mt-4 text-left max-w-2xl mx-auto">
-                  <summary className="cursor-pointer text-xs text-muted-foreground/60 hover:text-muted-foreground">
-                    View Mermaid diagram spec
-                  </summary>
-                  <pre className="mt-2 p-3 bg-muted rounded text-xs overflow-x-auto">
-{`sequenceDiagram
-    participant Browser
-    participant Backend Worker
-    participant Sandbox
-    participant Claude API
-    participant D1
-    participant R2
-
-    Browser->>Backend Worker: Socket.IO Connect (/socket.io/)
-    Backend Worker->>Sandbox: wsConnect(port 3001)
-
-    Note over Browser,Sandbox: User sends message
-    Browser->>Sandbox: emit("message", {prompt, options})
-    Sandbox->>Sandbox: Queue in MessageStream
-    Sandbox->>Claude API: SDK query()
-
-    Note over Claude API,Sandbox: SDK captures session_id
-    Sandbox-->>Browser: emit("message", {role:"system", session_id})
-    Browser->>D1: Update thread.session_id
-
-    loop Streaming Response
-        Claude API-->>Sandbox: text_delta chunk
-        Sandbox-->>Browser: emit("stream", {type:"text", content})
-    end
-
-    Claude API-->>Sandbox: message complete
-    Sandbox-->>Browser: emit("message", {role:"assistant", content})
-    Sandbox-->>Browser: emit("result", {cost_usd, duration_ms})
-
-    Note over Browser,D1: After streaming completes
-    loop Persist each message
-        Browser->>D1: POST /threads/{id}/messages
-    end
-
-    Note over Sandbox,R2: Production only
-    Sandbox->>Backend Worker: POST /sessions/{id}/sync
-    Backend Worker->>R2: Save transcript .jsonl`}
-                  </pre>
-                </details>
+            {/* Data Flow */}
+            <div className="bg-card border rounded-xl p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="h-10 w-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                  <MessageSquareIcon className="h-5 w-5 text-blue-500" />
+                </div>
+                <h3 className="font-semibold">Real-Time Streaming Flow</h3>
               </div>
+              <p className="text-sm text-muted-foreground mb-4">
+                Complete message lifecycle with Socket.IO streaming, SDK session capture
+                for thread resumption, and post-streaming persistence to D1 and R2.
+              </p>
+              <ul className="text-sm text-muted-foreground space-y-2">
+                <li className="flex items-center gap-2">
+                  <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                  WebSocket with HTTP polling fallback
+                </li>
+                <li className="flex items-center gap-2">
+                  <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                  Character-by-character streaming
+                </li>
+                <li className="flex items-center gap-2">
+                  <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                  Session persistence for resume
+                </li>
+              </ul>
             </div>
           </div>
         </div>
@@ -612,6 +509,17 @@ await query({ resume: sessionId, ... });`}
             </p>
           </div>
 
+          {/* Requirements Notice */}
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 mb-8">
+            <p className="text-sm text-amber-600 dark:text-amber-400">
+              <strong>Requirements:</strong> A{" "}
+              <a href="https://www.cloudflare.com/plans/developer-platform/" target="_blank" rel="noopener noreferrer" className="underline hover:no-underline">
+                paid Cloudflare Workers account
+              </a>{" "}
+              ($5/month) is required for the Sandbox SDK (Containers + Durable Objects). You'll also need an Anthropic API key and a Clerk account.
+            </p>
+          </div>
+
           <div className="space-y-6">
             <div className="bg-card border rounded-xl p-6">
               <h3 className="font-semibold mb-4 flex items-center gap-2">
@@ -622,7 +530,9 @@ await query({ resume: sessionId, ... });`}
                 <pre className="text-zinc-300">
 {`git clone https://github.com/MichaelAGolden/claude-agent-sdk-cloudflare-sandbox
 cd claude-agent-sdk-cloudflare-sandbox
-npm run install:all`}
+npm install
+cd container && npm install && cd ..
+cd frontend && npm install && cd ..`}
                 </pre>
               </div>
             </div>
@@ -637,12 +547,16 @@ npm run install:all`}
                 <a href="https://clerk.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline">
                   clerk.com
                 </a>
-                {" "}and add your publishable key:
+                {" "}and configure your environment:
               </p>
               <div className="bg-zinc-950 dark:bg-zinc-900 rounded-lg p-4 font-mono text-sm">
                 <pre className="text-zinc-300">
-{`# frontend/.env.local
-VITE_CLERK_PUBLISHABLE_KEY=pk_test_...`}
+{`# Copy the example env file
+cp frontend/.env.example frontend/.env.local
+
+# Edit frontend/.env.local and add your keys:
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
+VITE_API_URL=http://localhost:8787`}
                 </pre>
               </div>
             </div>
@@ -652,16 +566,24 @@ VITE_CLERK_PUBLISHABLE_KEY=pk_test_...`}
                 <span className="h-6 w-6 rounded-full bg-orange-500 text-white text-sm flex items-center justify-center">3</span>
                 Configure Cloudflare Resources
               </h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Create your D1 database and R2 bucket, then update <code className="px-1.5 py-0.5 rounded bg-muted">wrangler.toml</code> with the IDs:
+              </p>
               <div className="bg-zinc-950 dark:bg-zinc-900 rounded-lg p-4 font-mono text-sm">
                 <pre className="text-zinc-300">
 {`# Create D1 database
-npx wrangler d1 create my-agent-db
+npx wrangler@latest d1 create claude-agent-threads
 
 # Create R2 bucket
-npx wrangler r2 bucket create my-agent-data
+npx wrangler@latest r2 bucket create claude-agent-user-data
 
-# Add your Anthropic API key
-npx wrangler secret put ANTHROPIC_API_KEY`}
+# Run database migration
+npx wrangler@latest d1 execute claude-agent-threads \\
+  --remote --file=migrations/schema.sql
+
+# Add your secrets
+npx wrangler@latest secret put ANTHROPIC_API_KEY
+npx wrangler@latest secret put CLERK_SECRET_KEY`}
                 </pre>
               </div>
             </div>
@@ -673,11 +595,13 @@ npx wrangler secret put ANTHROPIC_API_KEY`}
               </h3>
               <div className="bg-zinc-950 dark:bg-zinc-900 rounded-lg p-4 font-mono text-sm">
                 <pre className="text-zinc-300">
-{`# Run database migration
-npx wrangler d1 execute my-agent-db --remote --file=migrations/schema.sql
+{`# Deploy the backend worker
+npx wrangler@latest deploy
 
-# Deploy everything
-npm run deploy`}
+# Build and deploy the frontend
+cd frontend
+npm run build
+npx wrangler@latest deploy`}
                 </pre>
               </div>
             </div>
@@ -782,7 +706,7 @@ npm run deploy`}
               <a href="https://github.com/MichaelAGolden" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline">
                 Michael Golden
               </a>
-              {" "}as a reference implementation for the Claude Agent SDK on Cloudflare.
+              {" "}for the Claude Agent SDK on Cloudflare.
             </p>
             <p>
               Inspired by and extended from{" "}

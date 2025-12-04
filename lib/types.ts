@@ -75,6 +75,33 @@ export type Skill = {
 };
 
 /**
+ * Represents a project that groups threads and isolates workspaces.
+ *
+ * Projects provide workspace isolation within a user's sandbox. Each project
+ * has its own directory at `/workspace/projects/{projectId}/` with independent
+ * files, skills, and configuration.
+ *
+ * @property {string} id - Unique UUID identifier for the project.
+ * @property {string} user_id - Foreign key reference to the owning user.
+ * @property {string} name - Human-readable project name.
+ * @property {string|null} description - Optional project description.
+ * @property {boolean} is_default - Whether this is the user's default project.
+ * @property {string} created_at - ISO 8601 timestamp of project creation.
+ * @property {string} updated_at - ISO 8601 timestamp of last modification.
+ *
+ * @see {@link Thread} - Threads belonging to a project
+ */
+export type Project = {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  is_default: number; // SQLite boolean (0 or 1)
+  created_at: string;
+  updated_at: string;
+};
+
+/**
  * Represents a conversation thread stored in D1 database.
  *
  * Threads are the top-level container for conversations. Each thread belongs
@@ -98,9 +125,12 @@ export type Skill = {
 export type Thread = {
   id: string;
   user_id: string;
+  project_id: string | null;
   session_id: string | null;
   title: string;
   summary: string | null;
+  /** Claude model API ID for this thread. Defaults to claude-sonnet-4-5-20250929. */
+  model: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -139,12 +169,14 @@ export type Message = {
 /**
  * Tracks the lifecycle state of a Claude Agent SDK process within a sandbox.
  *
- * @property {boolean} started - Whether the agent has been started
+ * @property {boolean} started - Whether the agent has been started and is ready
+ * @property {boolean} [starting] - Whether the agent is currently starting (prevents duplicate starts)
  * @property {number} startedAt - Unix timestamp when agent was started
  * @property {string} [processId] - The sandbox process ID for the agent
  */
 export type AgentState = {
   started: boolean;
+  starting?: boolean;
   startedAt: number;
   processId?: string;
 };

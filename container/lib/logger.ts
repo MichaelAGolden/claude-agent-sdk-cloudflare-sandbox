@@ -13,7 +13,8 @@
  * @module logger
  */
 
-import type { LogLevel, LogDirection, Logger } from './types';
+import type { Socket } from 'socket.io';
+import type { LogLevel, LogDirection, Logger } from './types.js';
 
 // ============================================================================
 // CONFIGURATION
@@ -24,6 +25,27 @@ import type { LogLevel, LogDirection, Logger } from './types';
  * Prevents log bloat from large message payloads.
  */
 const MAX_STRING_LENGTH = 200;
+
+/**
+ * Global socket reference for emitting logs to connected clients.
+ * This allows container logs to be forwarded through Socket.IO to the worker.
+ */
+let globalSocket: Socket | null = null;
+
+/**
+ * Sets the global socket for log forwarding.
+ * Call this when a socket connects to enable live log streaming.
+ */
+export function setLogSocket(socket: Socket | null): void {
+  globalSocket = socket;
+}
+
+/**
+ * Gets the current log socket.
+ */
+export function getLogSocket(): Socket | null {
+  return globalSocket;
+}
 
 // ============================================================================
 // UTILITY FUNCTIONS
@@ -87,11 +109,32 @@ interface LogEntry {
 
 /**
  * Internal helper to write a log entry.
+ * Also emits to connected socket for live log forwarding.
  *
  * @param entry - The log entry to write
  */
 function writeLog(entry: LogEntry): void {
-  console.log(JSON.stringify(entry, truncateStrings));
+  const logStr = JSON.stringify(entry, truncateStrings);
+  console.log(logStr);
+
+  // Forward important logs via Socket.IO for live streaming to worker/frontend
+  // Forward: errors, warnings, hook events, SDK messages, and key connection events
+  if (globalSocket?.connected) {
+    const event = entry.event || '';
+    const message = entry.message || '';
+
+    const shouldForward = entry.level === 'ERROR' ||
+                          entry.level === 'WARN' ||
+                          event.includes('hook') ||
+                          event.startsWith('SDK_MSG') ||
+                          message.includes('connected') ||
+                          message.includes('Query') ||
+                          message.includes('session');
+
+    if (shouldForward) {
+      globalSocket.emit('container_log', entry);
+    }
+  }
 }
 
 // ============================================================================
