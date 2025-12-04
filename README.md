@@ -3,7 +3,7 @@
 [![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/Demo-ezagentsdk.com-orange.svg)](https://ezagentsdk.com)
 
-A production-ready reference implementation showing how easy it is to deploy the Claude Agent SDK on Cloudflare's edge infrastructure. Features persistent conversations, real-time streaming, and the full Cloudflare stack.
+A production-ready reference implementation showing how easy it is to deploy the Claude Agent SDK on Cloudflare's edge infrastructure. Features persistent conversations, real-time streaming, and cloudflare stack of Workers, R2, D1, and the Sandbox SDK.
 
 **Live Demo:** [ezagentsdk.com](https://ezagentsdk.com)
 
@@ -28,7 +28,6 @@ This architecture lets you triage requests at the Worker level (SQL queries, cac
 - **Monorepo structure** with unified scripts
 - **Skills system** with runtime loading from R2
 - **Session management** per user with Durable Objects
-- **Cost-efficient** (~$0.13/month for 1000 active users)
 
 ## Quick Start
 
@@ -48,7 +47,7 @@ npm run setup
 npm run dev:full
 ```
 
-**Then open:** http://localhost:5173
+**Then open:** http://localhost:5174
 
 **You'll need:**
 - [Anthropic API key](https://console.anthropic.com/settings/keys) - for Claude
@@ -87,7 +86,7 @@ For detailed setup instructions, see **[docs/DEVELOPMENT.md](./docs/DEVELOPMENT.
 5. User data loads from R2 (mount in prod, writeFile in dev)
 
 **Port Reference:**
-- `5173` - Vite dev server (frontend)
+- `5174` - Vite dev server (frontend)
 - `8787` - Wrangler dev server (Worker)
 - `3001` - Agent SDK Socket.IO server (container)
 - `3000` - Reserved for Cloudflare control plane
